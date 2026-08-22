@@ -1,0 +1,25 @@
+{
+  "name": "call9me",
+  "version": "1.0.0",
+  "description": "this is a website that can communicate with others",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mingchungood1234-lang/call9me.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/mingchungood1234-lang/call9me/issues"
+  },
+  "homepage": "https://github.com/mingchungood1234-lang/call9me#readme",
+  "dependencies": {
+    "express": "^5.2.1",
+    "socket.io": "^4.8.3"
+  }
+}

@@ -1,0 +1,145 @@
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    font-family: Arial, sans-serif;
+
+    background:
+        linear-gradient(
+            135deg,
+            #111827,
+            #020617
+        );
+
+    color: white;
+
+    height: 100vh;
+
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+.phone {
+    width: 380px;
+
+    background: rgba(30, 41, 59, 0.9);
+
+    border-radius: 24px;
+
+    padding: 30px;
+
+    box-shadow:
+        0 20px 60px rgba(0, 0, 0, 0.5);
+
+    backdrop-filter: blur(20px);
+}
+
+.header {
+    text-align: center;
+}
+
+.header h1 {
+    margin: 0;
+    font-size: 28px;
+}
+
+.header p {
+    color: #94a3b8;
+}
+
+.dialer {
+    margin-top: 30px;
+
+    display: flex;
+    gap: 10px;
+}
+
+.dialer input {
+    flex: 1;
+
+    padding: 14px;
+
+    border-radius: 12px;
+    border: none;
+
+    background: #0f172a;
+    color: white;
+
+    outline: none;
+}
+
+.dialer button {
+    border: none;
+
+    padding: 14px 18px;
+
+    border-radius: 12px;
+
+    cursor: pointer;
+
+    background: #3b82f6;
+    color: white;
+}
+
+.call-area {
+    text-align: center;
+
+    margin-top: 50px;
+}
+
+.avatar {
+    width: 100px;
+    height: 100px;
+
+    margin: auto;
+
+    border-radius: 50%;
+
+    background: #334155;
+
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    font-size: 45px;
+}
+
+.call-area h2 {
+    margin-top: 20px;
+}
+
+.call-area p {
+    color: #94a3b8;
+}
+
+.controls {
+    display: flex;
+
+    justify-content: center;
+
+    gap: 25px;
+
+    margin-top: 40px;
+}
+
+.controls button {
+    width: 60px;
+    height: 60px;
+
+    border-radius: 50%;
+
+    border: none;
+
+    cursor: pointer;
+
+    font-size: 24px;
+
+    background: #334155;
+}
+
+.controls .hangup {
+    background: #ef4444;
+}

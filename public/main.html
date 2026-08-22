@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <title>call9me.com</title>
+
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+
+<div class="phone">
+
+    <div class="header">
+        <h1>call9me</h1>
+        <p id="status"></p>
+    </div>
+
+    <div class="dialer">
+
+        <input
+            id="roomInput"
+            type="text"
+            placeholder="Enter call ID"
+        >
+
+        <button id="joinButton">
+            Join Call
+        </button>
+
+    </div>
+
+    <div class="call-area">
+
+        <div class="avatar">
+            👤
+        </div>
+
+        <h2 id="callName">
+            Waiting for call
+        </h2>
+
+        <p id="callStatus">
+            Not connected
+        </p>
+
+    </div>
+
+    <div class="controls">
+
+        <button id="muteButton">
+            🎤
+        </button>
+
+        <button id="hangupButton" class="hangup">
+            📞
+        </button>
+
+    </div>
+
+</div>
+
+<audio
+    id="remoteAudio"
+    autoplay
+></audio>
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="app.js"></script>
+
+</body>
+</html>
