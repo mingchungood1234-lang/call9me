@@ -4,11 +4,29 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>call9me</title>
+    <link rel="stylesheet" href="index.css">
+    <link rel="manifest" href="/manifest.json">
+    <meta name="viewport"
+        content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <!--pwa full screen-->
+    <meta name="theme-color" content="#ffffff">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="apple-mobile-web-app-title" content="call9me">
+
+    <link rel="apple-touch-icon" href="/icon-192.png">
+    <!--user friendly font-->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600&display=swap" rel="stylesheet">
+
 </head>
 <body>
-    <h1>What is your name?</h1>
-    <input type="text" placeholder="name" id="nameInput">
-    <button type="button" id="continue">continue</button>
+    <div class="container">
+        <h1>What is your name?</h1>
+        <input type="text" placeholder="name" id="nameInput" autocomplete="name" enterkeyhint="next">
+        <button type="button" id="continue">continue</button>
+    </div>
 </body>
 <script src="index.js"></script>
 </html>
