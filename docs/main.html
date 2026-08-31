@@ -2,24 +2,24 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta
-        name="viewport"
-        content="width=device-width, initial-scale=1.0"
-    >
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 
-    <title>call9me.com</title>
+    <title>call9me</title>
 
     <link rel="stylesheet" href="style.css">
     <link rel="manifest" href="/manifest.json">
-    <meta name="viewport"
-        content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 
     <meta name="theme-color" content="#ffffff">
     <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
     <meta name="apple-mobile-web-app-title" content="call9me">
 
     <link rel="apple-touch-icon" href="/icon-192.png">
+
+    <!-- Minimalist Typography -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 </head>
 
 <body>
@@ -27,50 +27,106 @@
 <div class="phone">
 
     <div class="header">
-        <h1>call9me</h1>
-        <p id="status"></p>
+        <div class="brand">
+            <span class="brand-dot"></span>
+            <h1>call9me</h1>
+        </div>
+        <p id="status" class="status-badge"></p>
+        <span class="participants-badge" id="participantCount" style="display:none;">👥 1 in room</span>
     </div>
 
     <div class="dialer">
-
-        <input
-            id="roomInput"
-            type="text"
-            placeholder="Enter call ID"
-        >
+        <div class="dialer-fields">
+            <div class="input-wrapper">
+                <input
+                    id="roomInput"
+                    type="text"
+                    placeholder="Enter call ID"
+                    autocomplete="off"
+                >
+            </div>
+            <div class="input-wrapper password-wrapper">
+                <input
+                    id="roomPassword"
+                    type="password"
+                    placeholder="Password (Optional / If locked)"
+                    autocomplete="off"
+                >
+            </div>
+        </div>
 
         <button id="joinButton">
             Join Call
         </button>
+    </div>
 
+    <!-- ICE Server Experiment Mode -->
+    <div class="experiment-bar">
+        <div class="experiment-info">
+            <span class="experiment-label">ICE Mode</span>
+            <span class="experiment-desc" id="currentModeLabel">STUN + TURN</span>
+        </div>
+        <div class="mode-toggle" role="group" aria-label="ICE Server Mode">
+            <button type="button" class="mode-btn" id="modeStun" title="Direct Google STUN">
+                STUN
+            </button>
+            <button type="button" class="mode-btn active" id="modeTurn" title="Relay & NAT with CoTURN">
+                TURN
+            </button>
+        </div>
     </div>
 
     <div class="call-area">
+        <div class="avatar-wrapper" id="avatarWrapper">
+            <div class="avatar">
+                👤
+            </div>
+        </div>
 
-        <div class="avatar">
-            👤
+        <div class="video-grid" id="videoGrid">
+            <!-- Dynamic screen share cards are rendered here -->
         </div>
 
         <h2 id="callName">
             Waiting for call
         </h2>
 
-        <p id="callStatus">
-            Not connected
-        </p>
-
+        <div class="call-status-pill">
+            <span class="status-dot"></span>
+            <p id="callStatus">
+                Not connected
+            </p>
+        </div>
     </div>
 
     <div class="controls">
-
-        <button id="muteButton">
+        <button id="muteButton" title="Mute / Unmute" aria-label="Mute / Unmute">
             🎤
         </button>
 
-        <button id="hangupButton" class="hangup">
-            📞
+        <button id="screenShareButton" title="Share Screen" aria-label="Share Screen">
+            🖥️
         </button>
 
+        <button id="hangupButton" class="hangup" title="End Call" aria-label="End Call">
+            📞
+        </button>
+    </div>
+
+    <!-- Live Public Rooms Directory (At the bottom) -->
+    <div class="rooms-section" id="roomsSection">
+        <div class="rooms-header">
+            <div class="rooms-title-wrap">
+                <span class="live-dot"></span>
+                <h3>Live Rooms</h3>
+            </div>
+            <button type="button" id="refreshRoomsBtn" class="refresh-btn" title="Refresh room list" aria-label="Refresh room list">
+                🔄
+            </button>
+        </div>
+        <div class="rooms-list" id="roomsList">
+            <div class="no-rooms-msg">No active rooms right now. Create one above!</div>
+        </div>
     </div>
 
 </div>
@@ -79,6 +135,7 @@
     id="remoteAudio"
     autoplay
 ></audio>
+<div id="audioContainer" style="display:none;"></div>
 
 <script src="/socket.io/socket.io.js"></script>
 <script src="app.js"></script>
