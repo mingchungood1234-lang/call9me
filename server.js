@@ -8,10 +8,10 @@ const server = http.createServer(app);
 const io = new Server(server);
 
 // CoTURN Configuration (supports environment variables or defaults)
-const TURN_IP = process.env.TURN_IP || "165.154.193.224";
+const TURN_IP = process.env.TURN_IP || "";
 const TURN_PORT = process.env.TURN_PORT || "3478";
-const TURN_USERNAME = process.env.TURN_USERNAME || "call9me";
-const TURN_CREDENTIAL = process.env.TURN_CREDENTIAL || "mingchun1214";
+const TURN_USERNAME = process.env.TURN_USERNAME || "";
+const TURN_CREDENTIAL = process.env.TURN_CREDENTIAL || "";
 const TURN_SECRET = process.env.TURN_SECRET || "";
 
 // API endpoint for frontend to retrieve ICE servers and TURN credentials
