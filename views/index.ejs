@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <%- include('partials/head', { title: 'Call9me — Sign in' }) %>
+</head>
+<body class="landing">
+  <div class="bg-blobs" aria-hidden="true"><span></span><span></span><span></span></div>
+  <div class="landing-theme"><%- include('partials/theme-toggle') %></div>
+
+  <main class="landing-card">
+    <div class="brand-mark" aria-hidden="true">9</div>
+    <h1><span class="brand-name">Call9me</span></h1>
+    <p class="tagline">Talk face to face with anyone, instantly.</p>
+    <div class="feature-pills" aria-label="Features">
+      <span>Group calls</span><span>Screen sharing</span><span>Chat rooms</span>
+    </div>
+
+    <form id="id-form" novalidate>
+      <label for="user-id">Your ID</label>
+      <input id="user-id" name="id" type="text" maxlength="20" autocomplete="username" autocapitalize="off"
+             autocorrect="off" spellcheck="false" placeholder="e.g. Alice_01" required>
+      <p id="id-hint" class="hint" data-state="neutral" aria-live="polite"><%= rules %></p>
+
+      <label for="user-pin">4-digit PIN</label>
+      <input id="user-pin" name="pin" type="password" inputmode="numeric" pattern="[0-9]{4}" maxlength="4"
+             autocomplete="current-password" placeholder="••••" class="pin-input" required>
+      <p id="pin-hint" class="hint" data-state="neutral" aria-live="polite">
+        New ID? The PIN you enter now becomes its password.
+      </p>
+
+      <button type="submit" id="enter-btn" class="btn btn-primary btn-block">Continue</button>
+    </form>
+
+    <% if (error) { %>
+      <p class="error-banner" role="alert"><%= error %></p>
+    <% } %>
+  </main>
+  <script type="module" src="/js/landing.js"></script>
+</body>
+</html>

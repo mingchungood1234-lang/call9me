@@ -1,0 +1,36 @@
+{
+  "name": "call9me-supreme",
+  "version": "1.0.0",
+  "description": "WebRTC group calls, screen sharing and public chat rooms (Node.js MVC backend, TypeScript frontend, PWA)",
+  "private": true,
+  "main": "dist/server/server.js",
+  "scripts": {
+    "build:client": "esbuild src/client/landing.ts src/client/app.ts --bundle --format=esm --target=es2020 --outdir=public/js --sourcemap",
+    "build:sw": "esbuild src/client/sw.ts --bundle --format=iife --target=es2020 --outfile=public/js/sw.js",
+    "build:server": "tsc -p tsconfig.json",
+    "build": "npm run typecheck && npm run build:client && npm run build:sw && npm run build:server",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.client.json && tsc -p tsconfig.sw.json",
+    "icons": "node scripts/generate-icons.js",
+    "start": "node dist/server/server.js",
+    "dev": "concurrently -k -n server,client,sw -c blue,magenta,green \"tsx watch src/server/server.ts\" \"npm run build:client -- --watch=forever\" \"npm run build:sw -- --watch=forever\""
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "ejs": "^3.1.10",
+    "express": "^5.3.0",
+    "socket.io": "^4.8.4",
+    "web-push": "^3.6.7"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^26.6.6",
+    "@types/web-push": "^3.6.4",
+    "concurrently": "^10.0.6",
+    "esbuild": "^0.28.2",
+    "socket.io-client": "^4.8.4",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3"
+  }
+}
