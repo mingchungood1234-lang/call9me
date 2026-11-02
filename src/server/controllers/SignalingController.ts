@@ -5,6 +5,7 @@ import { accountModel } from '../models/AccountModel';
 import { callModel, type Call } from '../models/CallModel';
 import { userModel, type OnlineUser } from '../models/UserModel';
 import { pushService } from '../services/PushService';
+import { listDirectory } from '../services/UserDirectory';
 import type { AppServer, AppSocket } from '../sockets/types';
 import { safeAck } from '../sockets/util';
 
@@ -143,7 +144,7 @@ export class SignalingController {
   }
 
   broadcastUsers(): void {
-    this.io.emit('users:update', userModel.list());
+    this.io.emit('users:update', listDirectory());
   }
 
   // ---- Call lifecycle ----

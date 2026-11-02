@@ -23,6 +23,15 @@
     </div>
   </header>
 
+  <div id="notify-banner" class="notify-banner" role="region" aria-label="Notifications" hidden>
+    <span class="panel-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 22a2.5 2.5 0 0 0 2.45-2h-4.9A2.5 2.5 0 0 0 12 22Zm7-6V11a7 7 0 0 0-5.5-6.84V3.5a1.5 1.5 0 0 0-3 0v.66A7 7 0 0 0 5 11v5l-2 2v1h18v-1l-2-2Z"/></svg></span>
+    <p><strong>Get calls even when the app is closed.</strong> Turn on notifications so your phone rings for calls and new messages.</p>
+    <div class="notify-banner-actions">
+      <button id="notify-banner-dismiss" class="btn btn-ghost btn-small" type="button">Not now</button>
+      <button id="notify-banner-enable" class="btn btn-primary btn-small" type="button">Turn on</button>
+    </div>
+  </div>
+
   <main class="layout">
     <!-- Online users -->
     <aside class="panel users-panel" data-panel="users">

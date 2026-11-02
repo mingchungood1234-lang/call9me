@@ -21,6 +21,7 @@ export class ChatController {
       const roomId = roomModel.normalize(payload.roomId);
       const alreadyMember = roomModel.isMember(roomId, userId);
       roomModel.join(roomId, userId);
+      roomModel.follow(roomId, userId);
       socket.join(channel(roomId));
 
       ack({ ok: true, roomId, history: roomModel.history(roomId), members: roomModel.members(roomId) });
@@ -31,10 +32,12 @@ export class ChatController {
       this.emitMembers(roomId);
     });
 
+    // Leaving on purpose also stops notifications; disconnecting (app closed) doesn't.
     socket.on('chat:leave', (payload) => {
       if (!isValidRoomId(payload?.roomId)) return;
       socket.leave(channel(roomModel.normalize(payload.roomId)));
       this.leave(payload.roomId, userId);
+      roomModel.unfollow(payload.roomId, userId);
     });
 
     socket.on('chat:message', (payload, rawAck) => {
@@ -66,10 +69,15 @@ export class ChatController {
     this.emitMembers(notice.roomId);
   }
 
-  /** Background notifications for other members, at most one per room every few seconds. */
+  /**
+   * Notifications for everyone in or following the room (including users whose app is
+   * closed), at most one per room every few seconds. The service worker skips it when
+   * the app is on screen.
+   */
   private pushToMembers(roomId: string, from: string, text: string): void {
     const body = text.length > 120 ? `${text.slice(0, 117)}…` : text;
-    for (const member of roomModel.members(roomId)) {
+    const recipients = new Set([...roomModel.members(roomId), ...roomModel.followersOf(roomId)]);
+    for (const member of recipients) {
       if (member === from) continue;
       pushService.notify(
         member,

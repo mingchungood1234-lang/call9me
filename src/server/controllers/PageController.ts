@@ -1,7 +1,7 @@
 import type { Request, Response } from 'express';
 import { PIN_RULES, USER_ID_RULES } from '../../shared/validation';
 import { config } from '../config';
-import { requestUserId } from '../middleware/session';
+import { refreshSessionCookie, requestUserId } from '../middleware/session';
 
 const ERROR_MESSAGES: Record<string, string> = {
   session: 'Please sign in to continue.',
@@ -37,6 +37,7 @@ export class PageController {
     // Escape "<" so the JSON can't break out of its <script> tag.
     const iceJson = JSON.stringify(config.iceServers).replace(/</g, '\\u003c');
     res.set('Cache-Control', 'no-store');
+    refreshSessionCookie(req, res);
     res.render('app', { userId, iceJson });
   }
 }

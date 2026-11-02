@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 import type { ChatMessage } from '../../shared/types';
 import { config } from '../config';
 
@@ -9,11 +11,22 @@ interface Room {
 }
 
 /**
- * In-memory public chat rooms. Room IDs are case-insensitive (stored lowercase).
- * A room and its history are discarded once its last member leaves.
+ * Public chat rooms. Room IDs are case-insensitive (stored lowercase).
+ *
+ * Members are users connected to a room right now. Followers are users who joined a
+ * room and haven't left it on purpose — they keep getting push notifications for it
+ * while their app is closed. Followers are persisted; rooms and messages are in memory.
+ * A room's history is discarded once nobody is in it and nobody follows it.
  */
 export class RoomModel {
   private readonly rooms = new Map<string, Room>();
+  /** roomId → user IDs */
+  private readonly followers = new Map<string, Set<string>>();
+  private persistTimer: NodeJS.Timeout | null = null;
+
+  constructor(private readonly followersFile: string) {
+    this.loadFollowers();
+  }
 
   normalize(roomId: string): string {
     return roomId.toLowerCase();
@@ -35,7 +48,7 @@ export class RoomModel {
     const room = this.rooms.get(id);
     if (!room) return;
     room.members.delete(userId);
-    if (room.members.size === 0) this.rooms.delete(id);
+    this.dropIfAbandoned(id);
   }
 
   isMember(roomId: string, userId: string): boolean {
@@ -64,6 +77,71 @@ export class RoomModel {
     }
     return message;
   }
+
+  // ---- Followers (notifications while offline) ----
+
+  follow(roomId: string, userId: string): void {
+    const id = this.normalize(roomId);
+    let set = this.followers.get(id);
+    if (!set) {
+      set = new Set();
+      this.followers.set(id, set);
+    }
+    if (!set.has(userId)) {
+      set.add(userId);
+      this.schedulePersist();
+    }
+  }
+
+  unfollow(roomId: string, userId: string): void {
+    const id = this.normalize(roomId);
+    const set = this.followers.get(id);
+    if (!set?.delete(userId)) return;
+    if (set.size === 0) this.followers.delete(id);
+    this.dropIfAbandoned(id);
+    this.schedulePersist();
+  }
+
+  /** On sign-out: stop all chat notifications for this user. */
+  unfollowAll(userId: string): void {
+    for (const roomId of [...this.followers.keys()]) this.unfollow(roomId, userId);
+  }
+
+  followersOf(roomId: string): string[] {
+    return [...(this.followers.get(this.normalize(roomId)) ?? [])];
+  }
+
+  private dropIfAbandoned(id: string): void {
+    const room = this.rooms.get(id);
+    if (room && room.members.size === 0 && !this.followers.has(id)) this.rooms.delete(id);
+  }
+
+  private loadFollowers(): void {
+    try {
+      const data: Record<string, string[]> = JSON.parse(fs.readFileSync(this.followersFile, 'utf8'));
+      for (const [roomId, users] of Object.entries(data)) {
+        if (users.length) this.followers.set(roomId, new Set(users));
+      }
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') console.warn(`[rooms] could not read ${this.followersFile}:`, err);
+    }
+  }
+
+  private schedulePersist(): void {
+    if (this.persistTimer) return;
+    this.persistTimer = setTimeout(() => {
+      this.persistTimer = null;
+      const data = Object.fromEntries([...this.followers].map(([roomId, users]) => [roomId, [...users]]));
+      try {
+        fs.mkdirSync(path.dirname(this.followersFile), { recursive: true });
+        const tmp = `${this.followersFile}.tmp`;
+        fs.writeFileSync(tmp, JSON.stringify(data));
+        fs.renameSync(tmp, this.followersFile);
+      } catch (err) {
+        console.warn('[rooms] could not save followers:', err);
+      }
+    }, 1000);
+  }
 }
 
-export const roomModel = new RoomModel();
+export const roomModel = new RoomModel(path.join(config.dataDir, 'room-followers.json'));

@@ -1,4 +1,5 @@
-import type { Request } from 'express';
+import type { Request, Response } from 'express';
+import { config } from '../config';
 import { sessionModel } from '../models/SessionModel';
 
 export const SESSION_COOKIE = 'c9m_sid';
@@ -30,4 +31,20 @@ export function sessionUserId(cookieHeader: string | undefined): string | undefi
 
 export function requestUserId(req: Request): string | undefined {
   return sessionUserId(req.headers.cookie);
+}
+
+export function setSessionCookie(req: Request, res: Response, token: string): void {
+  res.cookie(SESSION_COOKIE, token, {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: req.secure,
+    maxAge: config.sessionTtlMs,
+    path: '/',
+  });
+}
+
+/** Re-issues the cookie so its browser-side expiry slides along with the server session. */
+export function refreshSessionCookie(req: Request, res: Response): void {
+  const token = sessionTokenFrom(req.headers.cookie);
+  if (token) setSessionCookie(req, res, token);
 }

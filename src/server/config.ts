@@ -92,7 +92,8 @@ export const config = {
   rootDir: ROOT_DIR,
   /** Where registered accounts (ID + hashed PIN) are stored. */
   dataDir: process.env.DATA_DIR ?? path.join(ROOT_DIR, 'data'),
-  sessionTtlMs: 12 * 60 * 60 * 1000,
+  /** Sign-in lasts 30 days and renews with use, so installed PWAs stay signed in to answer calls. */
+  sessionTtlMs: 30 * 24 * 60 * 60 * 1000,
   /** Failed PIN attempts allowed per ID before a temporary lockout. */
   maxPinFailures: 5,
   pinLockoutMs: 60 * 1000,

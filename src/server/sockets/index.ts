@@ -4,6 +4,7 @@ import { ChatController } from '../controllers/ChatController';
 import { SignalingController } from '../controllers/SignalingController';
 import { sessionUserId } from '../middleware/session';
 import { userModel } from '../models/UserModel';
+import { listDirectory } from '../services/UserDirectory';
 import type { AppServer } from './types';
 import { safeAck } from './util';
 
@@ -28,7 +29,7 @@ export function registerSocketHandlers(io: AppServer): void {
 
     signaling.register(socket);
     chat.register(socket);
-    socket.on('users:list', (ack) => safeAck(ack)({ ok: true, users: userModel.list() }));
+    socket.on('users:list', (ack) => safeAck(ack)({ ok: true, users: listDirectory() }));
 
     // A call may be ringing for this user already (the app was opened from a call notification).
     const user = userModel.find(userId);

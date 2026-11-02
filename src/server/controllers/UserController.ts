@@ -3,11 +3,12 @@ import type { AvailabilityResponse } from '../../shared/types';
 import { isValidUserId, USER_ID_RULES } from '../../shared/validation';
 import { accountModel } from '../models/AccountModel';
 import { userModel } from '../models/UserModel';
+import { listDirectory } from '../services/UserDirectory';
 
 export class UserController {
   /** GET /api/users — currently online users. */
   static list(_req: Request, res: Response): void {
-    res.json({ users: userModel.list() });
+    res.json({ users: listDirectory() });
   }
 
   /** GET /api/users/:id/availability — whether an ID is valid, registered, and online. */

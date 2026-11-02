@@ -36,6 +36,9 @@ The app listens on `127.0.0.1:3000`, so put an HTTPS reverse proxy in front of i
 - **Public chat rooms.** Join any room by its ID; everyone using the same ID is in the same room. Shows who is in the room and the last 100 messages.
 - **Installable PWA and push notifications.** Notifications cover incoming calls, missed calls and new chat messages, and only appear when the app isn't on screen.
   - **Calls ring a closed app.** If the person called has notifications on, their device rings for 45 seconds even when the app is closed. The notification has Answer and Decline buttons on Android and desktop. Answering, or simply tapping the notification, opens the app and joins the call. Decline works without opening the app. If the phone locks while ringing, it keeps ringing instead of declining.
+  - **Offline users can still be reached.** The people list also shows offline users who have notifications on, marked "Offline · rings their phone", and calling them rings their phone. Chat rooms keep sending notifications after the app is closed, until the user leaves the room or signs out. The app reopens the last chat room.
+  - **Staying signed in.** Sign-in lasts 30 days and renews with use. Sessions are saved in `data/sessions.json` (only hashes of the tokens), so restarts and redeploys don't sign anyone out.
+  - In the installed app, a banner asks users to turn on notifications if they haven't yet.
   - **No zooming in the installed app.** Pinch, double-tap and Ctrl/⌘ + zoom are disabled when Call9me runs as an installed app. In a normal browser tab, zoom still works for accessibility.
 - **Phone layout.** On phones the app switches to a bottom tab bar (People / Call / Chat), with large touch targets, safe-area insets for notched screens, and a bottom-sheet incoming-call dialog. A landscape layout gives the video more room.
 - **Light and dark mode.** The app follows the system setting by default, and the toggle in the top bar remembers your choice.

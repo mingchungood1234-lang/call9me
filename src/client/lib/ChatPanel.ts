@@ -3,6 +3,8 @@ import { isValidRoomId, MAX_MESSAGE_LENGTH, ROOM_ID_RULES } from '../../shared/v
 import { $, el, formatTime, toast } from './dom';
 import type { AppSocket } from './socket';
 
+const LAST_ROOM_KEY = 'call9me:lastRoom';
+
 /** Public chat room UI: join a room by ID, see members, send/receive messages. */
 export class ChatPanel {
   private currentRoom: string | null = null;
@@ -49,6 +51,27 @@ export class ChatPanel {
     return this.currentRoom;
   }
 
+  /** When the app is reopened, go back to the room the user was in (they still get its notifications). */
+  restoreLastRoom(): void {
+    if (this.currentRoom) return;
+    let last: string | null = null;
+    try {
+      last = localStorage.getItem(LAST_ROOM_KEY);
+    } catch {
+      return;
+    }
+    if (last && isValidRoomId(last)) this.join(last, true);
+  }
+
+  private rememberRoom(roomId: string | null): void {
+    try {
+      if (roomId) localStorage.setItem(LAST_ROOM_KEY, roomId);
+      else localStorage.removeItem(LAST_ROOM_KEY);
+    } catch {
+      // Not remembered (private mode); the room still works for this visit.
+    }
+  }
+
   /** Re-join the active room after a reconnect (server state was lost). */
   rejoin(): void {
     if (this.currentRoom) this.join(this.currentRoom, true);
@@ -70,6 +93,7 @@ export class ChatPanel {
       }
       this.currentRoom = res.roomId;
       this.roomInput.value = res.roomId;
+      this.rememberRoom(res.roomId);
       this.messagesEl.replaceChildren();
       res.history.forEach((m) => this.appendMessage(m));
       this.renderMembers(res.members);
@@ -82,6 +106,7 @@ export class ChatPanel {
     if (!this.currentRoom) return;
     this.socket.emit('chat:leave', { roomId: this.currentRoom });
     this.currentRoom = null;
+    this.rememberRoom(null);
     this.messagesEl.replaceChildren();
     this.membersEl.replaceChildren();
     this.render();

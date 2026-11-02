@@ -1,6 +1,7 @@
 import type { Request, Response } from 'express';
 import type { PushSubscriptionJSON } from '../../shared/types';
 import { requestUserId } from '../middleware/session';
+import { CallController } from './CallController';
 import { pushSubscriptionModel } from '../models/PushSubscriptionModel';
 import { pushService } from '../services/PushService';
 
@@ -45,6 +46,8 @@ export class PushController {
       keys: { p256dh: subscription.keys.p256dh, auth: subscription.keys.auth },
     });
     res.json({ ok: true });
+    // Reachable-while-offline status changed: refresh everyone's people list.
+    CallController.signaling?.broadcastUsers();
   }
 
   /** POST /api/push/unsubscribe { endpoint } */
@@ -53,5 +56,6 @@ export class PushController {
     const { endpoint } = (req.body ?? {}) as { endpoint?: unknown };
     if (userId && typeof endpoint === 'string') pushSubscriptionModel.removeForUser(userId, endpoint);
     res.json({ ok: true });
+    CallController.signaling?.broadcastUsers();
   }
 }

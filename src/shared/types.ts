@@ -21,7 +21,8 @@ export interface IceServerConfig {
   credential?: string;
 }
 
-export type Presence = 'available' | 'busy';
+/** "offline": app closed, but notifications are on — calling rings their phone. */
+export type Presence = 'available' | 'busy' | 'offline';
 
 export interface OnlineUserSummary {
   id: string;

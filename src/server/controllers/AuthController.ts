@@ -1,9 +1,9 @@
 import type { Request, Response } from 'express';
 import type { LoginResponse } from '../../shared/types';
 import { isValidPin, isValidUserId, PIN_RULES, USER_ID_RULES } from '../../shared/validation';
-import { config } from '../config';
-import { SESSION_COOKIE, sessionTokenFrom } from '../middleware/session';
+import { requestUserId, SESSION_COOKIE, sessionTokenFrom, setSessionCookie } from '../middleware/session';
 import { accountModel } from '../models/AccountModel';
+import { roomModel } from '../models/RoomModel';
 import { sessionModel } from '../models/SessionModel';
 import { userModel } from '../models/UserModel';
 
@@ -31,18 +31,14 @@ export class AuthController {
     }
 
     sessionModel.destroy(sessionTokenFrom(req.headers.cookie));
-    res.cookie(SESSION_COOKIE, sessionModel.create(result.id), {
-      httpOnly: true,
-      sameSite: 'lax',
-      secure: req.secure,
-      maxAge: config.sessionTtlMs,
-      path: '/',
-    });
+    setSessionCookie(req, res, sessionModel.create(result.id));
     res.json({ ok: true, userId: result.id, created: result.created });
   }
 
-  /** POST /api/logout */
+  /** POST /api/logout — also stops chat notifications for rooms this user followed. */
   static logout(req: Request, res: Response): void {
+    const userId = requestUserId(req);
+    if (userId) roomModel.unfollowAll(userId);
     sessionModel.destroy(sessionTokenFrom(req.headers.cookie));
     res.clearCookie(SESSION_COOKIE, { path: '/' });
     res.json({ ok: true });

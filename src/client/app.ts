@@ -5,7 +5,7 @@ import { CallManager, canShareScreen, IDLE_CALL, type CallInfo } from './lib/Cal
 import { ChatPanel } from './lib/ChatPanel';
 import { $, avatar, el, hueFor, toast } from './lib/dom';
 import { MobileTabs } from './lib/MobileTabs';
-import { PushNotifications, type PushStatus } from './lib/push';
+import { isStandalone, PushNotifications, type PushStatus } from './lib/push';
 import type { AppSocket } from './lib/socket';
 import { bindThemeToggle } from './lib/theme';
 import { lockZoomInStandalone } from './lib/zoom';
@@ -42,6 +42,7 @@ const camBtn = $<HTMLButtonElement>('#cam-btn');
 const shareBtn = $<HTMLButtonElement>('#share-btn');
 const hangupBtn = $<HTMLButtonElement>('#hangup-btn');
 const notifyBtn = $<HTMLButtonElement>('#notify-btn');
+const notifyBanner = $('#notify-banner');
 const incomingDialog = $<HTMLDialogElement>('#incoming-dialog');
 const incomingText = $('#incoming-text');
 const incomingSub = $('#incoming-sub');
@@ -72,7 +73,7 @@ socket.on('connect', () => {
     chat.rejoin();
   } else {
     prefillCallRoomFromUrl();
-    joinRoomFromUrl(window.location.href);
+    if (!joinRoomFromUrl(window.location.href)) chat.restoreLastRoom();
     if (pendingAnswer) {
       // The server delivers the ringing invite right after connecting; if it doesn't, it's over.
       const { callId } = pendingAnswer;
@@ -111,10 +112,17 @@ socket.on('users:update', (users) => {
   renderUsers();
 });
 
+const PRESENCE_LABELS: Record<OnlineUserSummary['presence'], string> = {
+  available: 'Available',
+  busy: 'In a call',
+  offline: 'Offline · rings their phone',
+};
+
 function renderUsers(): void {
   const others = lastUsers.filter((u) => u.id !== userId);
-  usersCount.textContent = String(others.length);
-  tabs.setBadge('users', others.length || null);
+  const onlineCount = others.filter((u) => u.presence !== 'offline').length;
+  usersCount.textContent = String(onlineCount);
+  tabs.setBadge('users', onlineCount || null);
   if (others.length === 0) {
     usersList.replaceChildren(el('li', { className: 'empty-state', text: 'Nobody else is online yet.' }));
     return;
@@ -139,7 +147,7 @@ function renderUsers(): void {
         avatar(u.id, [el('span', { className: 'presence-dot', title: u.presence })]),
         el('span', { className: 'user-meta' }, [
           el('span', { className: 'user-name', text: u.id }),
-          el('span', { className: 'user-presence', text: u.presence === 'busy' ? 'In a call' : 'Available' }),
+          el('span', { className: 'user-presence', text: PRESENCE_LABELS[u.presence] }),
         ]),
         callBtn,
       ]);
@@ -547,12 +555,14 @@ tabs.onChange((tab) => {
 });
 
 /** `/app?room=xyz` (e.g. from a chat notification) opens that room. */
-function joinRoomFromUrl(href: string): void {
+/** @returns whether the URL named a room to open. */
+function joinRoomFromUrl(href: string): boolean {
   const room = new URL(href, window.location.origin).searchParams.get('room');
-  if (!room || !isValidRoomId(room)) return;
+  if (!room || !isValidRoomId(room)) return false;
   chat.join(room);
   tabs.show('chat');
   if (window.location.search) history.replaceState(null, '', '/app');
+  return true;
 }
 
 // ---- Notifications (PWA push) ----
@@ -569,7 +579,30 @@ function renderPushStatus(status: PushStatus): void {
   notifyBtn.title = titles[status];
   notifyBtn.setAttribute('aria-label', titles[status]);
   notifyBtn.setAttribute('aria-pressed', String(status === 'on'));
+  renderNotifyBanner(status);
 }
+
+// In the installed app, ask once (until dismissed) to turn notifications on — without
+// them, calls and messages can't reach the phone while the app is closed.
+const BANNER_DISMISSED_KEY = 'call9me:notifyBannerDismissed';
+function renderNotifyBanner(status: PushStatus): void {
+  let dismissed = false;
+  try {
+    dismissed = localStorage.getItem(BANNER_DISMISSED_KEY) === '1';
+  } catch {
+    /* show it */
+  }
+  notifyBanner.hidden = !(status === 'off' && isStandalone() && !dismissed);
+}
+$('#notify-banner-enable').addEventListener('click', () => notifyBtn.click());
+$('#notify-banner-dismiss').addEventListener('click', () => {
+  notifyBanner.hidden = true;
+  try {
+    localStorage.setItem(BANNER_DISMISSED_KEY, '1');
+  } catch {
+    /* hidden for this visit only */
+  }
+});
 
 notifyBtn.addEventListener('click', async () => {
   const status = notifyBtn.dataset.status as PushStatus;
@@ -606,6 +639,11 @@ void push.init().then(renderPushStatus);
 $('#leave-btn').addEventListener('click', async () => {
   calls.hangUp();
   socket.disconnect();
+  try {
+    localStorage.removeItem('call9me:lastRoom');
+  } catch {
+    /* ignore */
+  }
   await push.detach();
   await fetch('/api/logout', { method: 'POST' }).catch(() => {});
   window.location.href = '/';

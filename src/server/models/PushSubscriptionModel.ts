@@ -35,6 +35,11 @@ export class PushSubscriptionModel {
     if (existing && existing.userId.toLowerCase() === userId.toLowerCase()) this.remove(endpoint);
   }
 
+  /** Every user with at least one device subscribed. */
+  userIds(): string[] {
+    return [...new Set([...this.byEndpoint.values()].map((s) => s.userId))];
+  }
+
   forUser(userId: string): PushSubscriptionJSON[] {
     const key = userId.toLowerCase();
     return [...this.byEndpoint.values()].filter((s) => s.userId.toLowerCase() === key).map((s) => s.subscription);
