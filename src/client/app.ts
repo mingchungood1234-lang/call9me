@@ -643,6 +643,8 @@ document.addEventListener('click', (e) => {
 $('#notify-test-btn').addEventListener('click', async () => {
   notifyMenu.hidden = true;
   try {
+    // A subscription made with an old server key is always rejected (Apple: BadJwtToken).
+    if (await push.repair().catch(() => false)) toast('Re-registered this device for notifications.', 'success');
     const res = await fetch('/api/push/test', { method: 'POST' });
     const data: { ok: boolean; results?: PushTestResult[] } = await res.json();
     const results = data.results ?? [];
@@ -653,7 +655,15 @@ $('#notify-test-btn').addEventListener('click', async () => {
       toast(`Test sent to ${results.length} device${results.length > 1 ? 's' : ''}. It should appear in a few seconds.`, 'success', 6000);
     } else {
       const failed = results.filter((r) => !r.ok);
-      toast(`Push rejected by ${failed.map((r) => `${r.service} (${r.status}${r.error ? `: ${r.error}` : ''})`).join(', ')}`, 'error', 12000);
+      const badJwt = failed.some((r) => /BadJwtToken/i.test(r.error ?? ''));
+      toast(
+        `Push rejected by ${failed.map((r) => `${r.service} (${r.status}${r.error ? `: ${r.error}` : ''})`).join(', ')}` +
+          (badJwt
+            ? ' — check VAPID_SUBJECT in .env (a real mailto: or https: address) and that the server clock is correct.'
+            : ''),
+        'error',
+        15000,
+      );
     }
   } catch {
     toast('Could not send a test notification.', 'error');

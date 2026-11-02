@@ -35,7 +35,10 @@ function loadVapidKeys(): VapidKeys {
 
 /** Apple's push service rejects VAPID subjects on localhost / .local (403 BadJwtToken). */
 function warnAboutSubject(subject: string): void {
-  if (/localhost|\.local\b|example\.(com|org)/i.test(subject) || !/^(mailto:.+@.+\..+|https:\/\/.+)$/i.test(subject)) {
+  if (
+    /localhost|\.local\b|example\.(com|org)|yourdomain|\s/i.test(subject) ||
+    !/^(mailto:[^@\s]+@[^@\s]+\.[a-z]{2,}|https:\/\/[^\s]+\.[a-z]{2,}\/?)$/i.test(subject)
+  ) {
     console.warn(
       `[push] VAPID_SUBJECT "${subject}" is a placeholder. Apple (iPhone/iPad) rejects these, so iOS ` +
         'notifications will fail. Set VAPID_SUBJECT=mailto:you@yourdomain.com (or https://yourdomain.com) in .env.',
@@ -61,6 +64,9 @@ export class PushService {
     const keys = loadVapidKeys();
     this.publicKey = keys.publicKey;
     warnAboutSubject(config.vapidSubject);
+    // If this key changes between deploys, existing subscriptions break (Apple: BadJwtToken)
+    // until each device re-subscribes — the app does that automatically on next open.
+    console.log(`[push] VAPID subject: ${config.vapidSubject} · public key: ${keys.publicKey.slice(0, 16)}…`);
     webpush.setVapidDetails(config.vapidSubject, keys.publicKey, keys.privateKey);
   }
 

@@ -98,5 +98,6 @@ export const config = {
   maxPinFailures: 5,
   pinLockoutMs: 60 * 1000,
   /** Contact for push services (VAPID "sub"); must be a mailto: or https: URL. */
-  vapidSubject: process.env.VAPID_SUBJECT ?? 'mailto:admin@call9me.local',
+  // Stray quotes/spaces (e.g. VAPID_SUBJECT="mailto:x" kept literally by some tools) make Apple reject every push.
+  vapidSubject: (process.env.VAPID_SUBJECT ?? 'mailto:admin@call9me.local').trim().replace(/^["']|["']$/g, '').trim(),
 };

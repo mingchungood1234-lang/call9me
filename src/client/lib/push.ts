@@ -29,6 +29,12 @@ function base64UrlToBytes(base64Url: string): Uint8Array<ArrayBuffer> {
   return bytes;
 }
 
+function bytesToBase64Url(bytes: Uint8Array): string {
+  let raw = '';
+  for (const b of bytes) raw += String.fromCharCode(b);
+  return btoa(raw).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
 async function postJson(url: string, body: unknown): Promise<Response> {
   return fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
 }
@@ -42,13 +48,55 @@ export class PushNotifications {
 
   async init(): Promise<PushStatus> {
     this.registration = await registerServiceWorker();
-    const status = await this.status();
-    if (status === 'on') {
-      // Re-link this device to the current user (it may have been another user before).
-      const sub = await this.registration!.pushManager.getSubscription();
-      if (sub) await postJson('/api/push/subscribe', { subscription: sub.toJSON() }).catch(() => {});
+    if ((await this.status()) !== 'on') return this.status();
+
+    let sub = await this.registration!.pushManager.getSubscription();
+    if (sub && !(await this.matchesServerKey(sub))) {
+      // Made with an older server key (e.g. keys regenerated on redeploy): every push
+      // would be rejected (Apple: "BadJwtToken"). Replace it with one for the current key.
+      await postJson('/api/push/unsubscribe', { endpoint: sub.endpoint }).catch(() => {});
+      await sub.unsubscribe().catch(() => {});
+      sub = await this.subscribe().catch(() => null); // iOS may insist on a tap: then the bell shows "off"
     }
-    return status;
+    // Re-link this device to the current user (it may have been another user before).
+    if (sub) await postJson('/api/push/subscribe', { subscription: sub.toJSON() }).catch(() => {});
+    return this.status();
+  }
+
+  /**
+   * Replaces this device's subscription if it was made with an outdated server key.
+   * Call from a tap (iOS may require it). @returns whether it was replaced.
+   */
+  async repair(): Promise<boolean> {
+    const sub = await this.registration?.pushManager.getSubscription();
+    if (!sub || (await this.matchesServerKey(sub))) return false;
+    await postJson('/api/push/unsubscribe', { endpoint: sub.endpoint }).catch(() => {});
+    await sub.unsubscribe().catch(() => {});
+    const fresh = await this.subscribe();
+    await postJson('/api/push/subscribe', { subscription: fresh.toJSON() });
+    return true;
+  }
+
+  private async serverKey(): Promise<string> {
+    const { publicKey } = (await (await fetch('/api/push/key')).json()) as { publicKey: string };
+    return publicKey;
+  }
+
+  private async matchesServerKey(sub: PushSubscription): Promise<boolean> {
+    const key = sub.options.applicationServerKey;
+    if (!key) return true; // browser doesn't expose it; can't tell
+    try {
+      return bytesToBase64Url(new Uint8Array(key)) === (await this.serverKey()).replace(/=+$/, '');
+    } catch {
+      return true; // offline: keep it
+    }
+  }
+
+  private async subscribe(): Promise<PushSubscription> {
+    return this.registration!.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: base64UrlToBytes(await this.serverKey()),
+    });
   }
 
   async status(): Promise<PushStatus> {
@@ -66,13 +114,12 @@ export class PushNotifications {
     const permission = await Notification.requestPermission();
     if (permission !== 'granted') return this.status();
 
-    const { publicKey } = (await (await fetch('/api/push/key')).json()) as { publicKey: string };
-    const subscription =
-      (await this.registration.pushManager.getSubscription()) ??
-      (await this.registration.pushManager.subscribe({
-        userVisibleOnly: true,
-        applicationServerKey: base64UrlToBytes(publicKey),
-      }));
+    let subscription = await this.registration.pushManager.getSubscription();
+    if (subscription && !(await this.matchesServerKey(subscription))) {
+      await subscription.unsubscribe().catch(() => {});
+      subscription = null;
+    }
+    subscription ??= await this.subscribe();
     const res = await postJson('/api/push/subscribe', { subscription: subscription.toJSON() });
     if (!res.ok) throw new Error('Server rejected the subscription');
     return 'on';
