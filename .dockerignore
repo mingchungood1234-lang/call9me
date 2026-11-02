@@ -1,0 +1,15 @@
+# Rebuilt inside the image
+node_modules
+dist
+public/js
+
+# Secrets and runtime data never go into the image
+.env
+data
+
+.git
+*.log
+README.md
+docker-compose.yml
+Dockerfile
+.dockerignore

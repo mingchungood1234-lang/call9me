@@ -18,6 +18,15 @@ npm run dev
 
 To try it, open two or more browser windows (incognito counts as a separate person), sign in with a different ID in each, and call one from another.
 
+## Docker (VPS)
+
+```bash
+cp .env.example .env          # fill in TURN_* (your coturn) etc.
+docker compose up -d --build
+docker compose logs -f        # check the "ICE servers:" line
+```
+The app listens on `127.0.0.1:3000`, so put an HTTPS reverse proxy in front of it. The proxy must forward WebSocket upgrades for `/socket.io/`. Accounts, push subscriptions and VAPID keys are kept in the `call9me-data` volume, so they survive rebuilds. To update after pulling new code, run `docker compose up -d --build` again.
+
 ## Features
 
 - **Sign in with ID + PIN.** The ID is 3–20 English letters, digits or `_`, starting with a letter. The PIN is 4 digits. There is no email or SMS verification: the first sign-in with an ID creates it with that PIN, and later sign-ins must use the same PIN. Five wrong PINs lock the ID for one minute. PINs are stored as salted scrypt hashes.

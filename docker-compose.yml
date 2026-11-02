@@ -1,0 +1,37 @@
+# Call9me on a VPS.
+#
+#   cp .env.example .env      # fill in TURN_* (your coturn), VAPID_SUBJECT, ...
+#   docker compose up -d --build
+#
+# The app listens on 127.0.0.1:3000 only. Put an HTTPS reverse proxy (nginx / Caddy)
+# in front of it: camera, microphone, push notifications and the PWA require HTTPS.
+# coturn keeps running on the host as before; browsers reach it via TURN_URLS.
+
+services:
+  call9me:
+    build: .
+    image: call9me:latest
+    container_name: call9me
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # These override .env so the container always matches the Dockerfile and proxy setup.
+      PORT: "3000"
+      HOST: "0.0.0.0"
+      DATA_DIR: /app/data
+      TRUST_PROXY: "1"
+    ports:
+      # Only reachable from the VPS itself (your reverse proxy). Use "3000:3000" to expose it directly.
+      - "127.0.0.1:3000:3000"
+    volumes:
+      # Accounts (ID + hashed PIN), push subscriptions and VAPID keys survive rebuilds.
+      - call9me-data:/app/data
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  call9me-data:

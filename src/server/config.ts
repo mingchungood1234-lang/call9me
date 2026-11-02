@@ -65,9 +65,20 @@ export function describeIceServers(servers: IceServerConfig[]): string {
     .join(' | ');
 }
 
+/**
+ * TRUST_PROXY: set when running behind a reverse proxy (nginx, Caddy, Docker) so
+ * Express reads X-Forwarded-Proto/For — e.g. "1" (one proxy hop), "loopback", "true".
+ */
+function parseTrustProxy(raw: string | undefined): boolean | number | string {
+  if (!raw || raw === 'false') return false;
+  if (raw === 'true') return true;
+  return /^\d+$/.test(raw) ? Number(raw) : raw;
+}
+
 export const config = {
   port: Number(process.env.PORT ?? 3000),
   host: process.env.HOST ?? '0.0.0.0',
+  trustProxy: parseTrustProxy(process.env.TRUST_PROXY),
   iceServers: buildIceServers(),
   chatHistoryLimit: 100,
   /**

@@ -6,6 +6,8 @@ import { router } from './routes';
 export function createApp(): express.Express {
   const app = express();
   app.disable('x-powered-by');
+  // Behind HTTPS reverse proxy: lets req.secure see https so the session cookie is Secure.
+  app.set('trust proxy', config.trustProxy);
   app.set('view engine', 'ejs');
   app.set('views', path.join(config.rootDir, 'views'));
 
