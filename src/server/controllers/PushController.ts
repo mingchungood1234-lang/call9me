@@ -50,6 +50,17 @@ export class PushController {
     CallController.signaling?.broadcastUsers();
   }
 
+  /** POST /api/push/test — sends a test notification to all of my devices and reports each push service's answer. */
+  static async test(req: Request, res: Response): Promise<void> {
+    const userId = requestUserId(req);
+    if (!userId) {
+      res.status(401).json({ ok: false, error: 'Not signed in' });
+      return;
+    }
+    const results = await pushService.sendTest(userId);
+    res.json({ ok: results.length > 0 && results.every((r) => r.ok), results });
+  }
+
   /** POST /api/push/unsubscribe { endpoint } */
   static unsubscribe(req: Request, res: Response): void {
     const userId = requestUserId(req);

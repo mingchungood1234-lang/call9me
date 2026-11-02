@@ -30,6 +30,10 @@ export function registerSocketHandlers(io: AppServer): void {
     signaling.register(socket);
     chat.register(socket);
     socket.on('users:list', (ack) => safeAck(ack)({ ok: true, users: listDirectory() }));
+    socket.on('client:visibility', (payload) => {
+      const user = userModel.find(userId);
+      if (user && user.socketId === socket.id) user.visible = payload?.visible === true;
+    });
 
     // A call may be ringing for this user already (the app was opened from a call notification).
     const user = userModel.find(userId);
@@ -39,6 +43,7 @@ export function registerSocketHandlers(io: AppServer): void {
     socket.on('disconnect', () => {
       const user = userModel.find(userId);
       if (user && user.socketId === socket.id) {
+        user.visible = false; // gone: notifications must reach the device again
         signaling.handleDisconnect(user);
         chat.handleDisconnect(userId);
         userModel.remove(userId);

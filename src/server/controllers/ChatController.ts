@@ -82,7 +82,7 @@ export class ChatController {
       pushService.notify(
         member,
         { type: 'chat', title: `#${roomId} · ${from}`, body, tag: `chat-${roomId}`, url: `/app?room=${roomId}` },
-        CHAT_PUSH_THROTTLE_MS,
+        { throttleMs: CHAT_PUSH_THROTTLE_MS },
       );
     }
   }

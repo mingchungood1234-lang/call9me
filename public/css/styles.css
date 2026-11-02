@@ -392,6 +392,35 @@ body.app {
 .conn-dot[data-state='online'] { background: var(--success); }
 .conn-dot[data-state='offline'] { background: var(--danger); }
 
+.topbar-user { position: relative; }
+.notify-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 20;
+  display: grid;
+  min-width: 220px;
+  padding: 6px;
+  border-radius: 14px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-lg);
+  animation: fade-in 0.15s ease-out;
+}
+.notify-menu button {
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 9px;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+}
+.notify-menu button:hover { background: var(--bg-hover); }
+#notify-off-btn { color: var(--danger); }
+
 .notify-banner {
   display: flex;
   align-items: center;

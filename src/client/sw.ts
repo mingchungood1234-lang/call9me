@@ -3,7 +3,7 @@ import type { PushPayload } from '../shared/types';
 
 declare const self: ServiceWorkerGlobalScope;
 
-const CACHE = 'call9me-v1';
+const CACHE = 'call9me-v2';
 const PRECACHE = ['/css/styles.css', '/js/app.js', '/js/landing.js', '/manifest.webmanifest', '/icons/icon-192.png'];
 
 self.addEventListener('install', (event) => {
@@ -59,21 +59,22 @@ self.addEventListener('fetch', (event) => {
 });
 
 self.addEventListener('push', (event) => {
-  let payload: PushPayload;
+  let parsed: PushPayload | null = null;
   try {
-    payload = event.data?.json() as PushPayload;
+    parsed = event.data?.json() as PushPayload;
   } catch {
-    return;
+    /* fall back below */
   }
-  if (!payload?.title) return;
+  // Even an unreadable push must show something (see the iOS note below).
+  const payload: PushPayload = parsed?.title
+    ? parsed
+    : { type: 'chat', title: 'Call9me', body: 'You have new activity.', tag: 'generic', url: '/app' };
 
+  // Always show a notification. Skipping one ("silent push") makes iOS revoke the
+  // subscription after a few times; the server already avoids pushing while the app
+  // is on screen (the page reports its visibility).
   event.waitUntil(
     (async () => {
-      // The page already shows calls/messages in-app while it's on screen.
-      const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
-      const visible = windows.some((c) => c.visibilityState === 'visible');
-      if (visible && payload.type !== 'missed-call') return;
-
       const isCall = payload.type === 'call';
       const options: NotificationOptions & {
         renotify?: boolean;

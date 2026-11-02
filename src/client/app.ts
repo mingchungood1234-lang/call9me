@@ -1,5 +1,5 @@
 import { io } from 'socket.io-client';
-import { CONNECT_ERRORS, type OnlineUserSummary } from '../shared/types';
+import { CONNECT_ERRORS, type OnlineUserSummary, type PushTestResult } from '../shared/types';
 import { isValidRoomId, isValidUserId, ROOM_ID_RULES } from '../shared/validation';
 import { CallManager, canShareScreen, IDLE_CALL, type CallInfo } from './lib/CallManager';
 import { ChatPanel } from './lib/ChatPanel';
@@ -64,8 +64,18 @@ const socket: AppSocket = io({ autoConnect: false });
 let takenRetries = 0;
 let hasConnected = false;
 
+// The server only sends push notifications while the app is NOT on screen.
+function reportVisibility(): void {
+  if (socket.connected) socket.emit('client:visibility', { visible: document.visibilityState === 'visible' });
+}
+document.addEventListener('visibilitychange', reportVisibility);
+window.addEventListener('pagehide', () => {
+  if (socket.connected) socket.emit('client:visibility', { visible: false });
+});
+
 socket.on('connect', () => {
   takenRetries = 0;
+  reportVisibility();
   connDot.dataset.state = 'online';
   connDot.title = 'Connected';
   if (hasConnected) {
@@ -612,8 +622,7 @@ notifyBtn.addEventListener('click', async () => {
     } else if (status === 'denied') {
       toast('Notifications are blocked. Allow them in your browser/site settings.', 'error', 6000);
     } else if (status === 'on') {
-      renderPushStatus(await push.disable());
-      toast('Notifications turned off.');
+      notifyMenu.hidden = !notifyMenu.hidden;
     } else {
       const next = await push.enable();
       renderPushStatus(next);
@@ -624,6 +633,36 @@ notifyBtn.addEventListener('click', async () => {
     console.error(err);
     toast('Could not change notification settings.', 'error');
   }
+});
+
+// Bell menu (when notifications are on): send a test, or turn them off.
+const notifyMenu = $('#notify-menu');
+document.addEventListener('click', (e) => {
+  if (!notifyMenu.hidden && !(e.target as HTMLElement).closest('#notify-menu, #notify-btn')) notifyMenu.hidden = true;
+});
+$('#notify-test-btn').addEventListener('click', async () => {
+  notifyMenu.hidden = true;
+  try {
+    const res = await fetch('/api/push/test', { method: 'POST' });
+    const data: { ok: boolean; results?: PushTestResult[] } = await res.json();
+    const results = data.results ?? [];
+    if (results.length === 0) {
+      toast('This device is not subscribed. Turn notifications off and on again.', 'error', 7000);
+      renderPushStatus(await push.status());
+    } else if (data.ok) {
+      toast(`Test sent to ${results.length} device${results.length > 1 ? 's' : ''}. It should appear in a few seconds.`, 'success', 6000);
+    } else {
+      const failed = results.filter((r) => !r.ok);
+      toast(`Push rejected by ${failed.map((r) => `${r.service} (${r.status}${r.error ? `: ${r.error}` : ''})`).join(', ')}`, 'error', 12000);
+    }
+  } catch {
+    toast('Could not send a test notification.', 'error');
+  }
+});
+$('#notify-off-btn').addEventListener('click', async () => {
+  notifyMenu.hidden = true;
+  renderPushStatus(await push.disable());
+  toast('Notifications turned off.');
 });
 
 navigator.serviceWorker?.addEventListener('message', (event: MessageEvent<{ type?: string; url?: string }>) => {

@@ -7,6 +7,8 @@ export interface OnlineUser {
   callId: string | null;
   /** A call this user is being invited to (ringing). */
   invitedTo: string | null;
+  /** The app is on screen (reported by the page); no push notifications are sent then. */
+  visible: boolean;
   connectedAt: number;
 }
 
@@ -27,7 +29,7 @@ export class UserModel {
 
   add(id: string, socketId: string): OnlineUser | null {
     if (this.isTaken(id)) return null;
-    const user: OnlineUser = { id, socketId, callId: null, invitedTo: null, connectedAt: Date.now() };
+    const user: OnlineUser = { id, socketId, callId: null, invitedTo: null, visible: false, connectedAt: Date.now() };
     this.users.set(this.key(id), user);
     return user;
   }

@@ -110,4 +110,10 @@ The username and password must match a `user=call9me:YourStrongPassword` line in
 
 - **HTTPS is required** for camera and microphone access, service workers and push notifications. `localhost` is the only exception. To use the app from phones, put it behind HTTPS, for example with a reverse proxy, a tunnel such as Cloudflare Tunnel or ngrok, or hosting.
 - **iPhone and iPad:** push notifications only work after the user taps Share → **Add to Home Screen** and opens Call9me from the home screen (iOS 16.4 or later). The bell button explains this when it applies.
-- Online users, calls, chat rooms and sign-in sessions are kept in memory, so they reset when the server restarts. Accounts and push subscriptions are stored in `data/` and survive restarts.
+- **iPhone notifications not arriving?**
+  1. Set `VAPID_SUBJECT=mailto:you@yourdomain.com` in `.env`. Apple rejects the default `@call9me.local` address, and the server warns about this at startup.
+  2. Use iOS 16.4 or later, and add Call9me to the Home Screen.
+  3. Turn notifications on from inside the installed app.
+  4. Use the bell → **Send test notification**. It shows the answer from Apple's push server (`web.push.apple.com`). Rejected pushes are also logged as `[push] … rejected the push`.
+  5. On the iPhone, check Settings → Notifications → Call9me, and Focus modes.
+- Online users, calls and chat messages are kept in memory, so they reset when the server restarts. Accounts, sign-in sessions, push subscriptions and chat-room followers are stored in `data/` and survive restarts.

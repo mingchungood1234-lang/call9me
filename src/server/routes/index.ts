@@ -28,3 +28,4 @@ router.post('/api/calls/:callId/decline', CallController.decline);
 router.get('/api/push/key', PushController.publicKey);
 router.post('/api/push/subscribe', PushController.subscribe);
 router.post('/api/push/unsubscribe', PushController.unsubscribe);
+router.post('/api/push/test', PushController.test);

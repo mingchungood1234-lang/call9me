@@ -51,6 +51,8 @@ export type Ack<T = {}> = (result: ({ ok: true } & T) | { ok: false; error: stri
 
 export interface ClientToServerEvents {
   'users:list': (ack: Ack<{ users: OnlineUserSummary[] }>) => void;
+  /** Whether the app is on screen; push notifications are only sent while it isn't. */
+  'client:visibility': (payload: { visible: boolean }) => void;
 
   /** Starts a new call, or adds `to` to the call we are already in. */
   'call:invite': (
@@ -156,6 +158,15 @@ export interface PushPayload {
   url: string;
   /** For "call": lets the notification's Decline button reject the call without opening the app. */
   callId?: string;
+}
+
+/** What a push service (Apple, Google, Mozilla…) answered for one device. */
+export interface PushTestResult {
+  /** e.g. "web.push.apple.com" */
+  service: string;
+  ok: boolean;
+  status: number;
+  error?: string;
 }
 
 export type LoginResponse = { ok: true; userId: string; created: boolean } | { ok: false; error: string };
