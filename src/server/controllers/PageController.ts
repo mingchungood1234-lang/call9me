@@ -1,6 +1,6 @@
 import type { Request, Response } from 'express';
 import { PIN_RULES, USER_ID_RULES } from '../../shared/validation';
-import { config } from '../config';
+import { config, isAdmin } from '../config';
 import { refreshSessionCookie, requestUserId } from '../middleware/session';
 import { accountModel } from '../models/AccountModel';
 import { googleEnabled, pendingGoogleFor, suggestId } from './GoogleAuthController';
@@ -55,6 +55,7 @@ export class PageController {
       iceJson,
       googleEnabled: googleEnabled(),
       googleEmail: accountModel.googleEmailOf(userId) ?? null,
+      admin: isAdmin(userId), // can post in the Public chat
     });
   }
 }

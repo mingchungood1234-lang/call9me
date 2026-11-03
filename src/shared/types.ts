@@ -50,6 +50,15 @@ export interface ChatMessage {
   sticker?: string;
 }
 
+/** A row of our chat list: a room we've joined (or the Public chat), its last message and unread count. */
+export interface ChatRoomPreview {
+  id: string;
+  lastMessage?: ChatMessage;
+  /** Messages from others since we last read the room. */
+  unread: number;
+  visibility?: RoomVisibility;
+}
+
 /** One of our own stickers (a picture we added; sending it posts it big in chat). */
 export interface Sticker {
   id: string;
@@ -177,6 +186,10 @@ export interface ClientToServerEvents {
     ack: Ack<{ roomId: string; history: ChatMessage[]; members: string[] }>,
   ) => void;
   'chat:leave': (payload: { roomId: string }) => void;
+  /** Stops viewing a room's conversation (back to the chat list); we stay in the room. */
+  'chat:close': (payload: { roomId: string }) => void;
+  /** We've seen everything in this room so far (resets its unread count). */
+  'chat:read': (payload: { roomId: string }) => void;
   'chat:message': (payload: { roomId: string; text: string }, ack: Ack) => void;
 
   /** Our call history, newest first. */
@@ -248,6 +261,8 @@ export interface ServerToClientEvents {
 
   'chat:message': (message: ChatMessage) => void;
   'chat:members': (payload: { roomId: string; members: string[] }) => void;
+  /** Our chat list (the Public chat first, then the rooms we've joined); sent on connect. */
+  'chat:rooms': (rooms: ChatRoomPreview[]) => void;
   /** Someone tagged us (`@ourId`) in a room's chat. */
   'chat:mention': (payload: { from: string; roomId: string; text: string }) => void;
   /** The owner deleted this room; everyone in it has been moved out. */

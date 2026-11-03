@@ -14,6 +14,12 @@ export const PIN_RULES = 'PIN must be exactly 4 digits.';
 export const MAX_MESSAGE_LENGTH = 500;
 
 /**
+ * The Public chat: in everyone's chat list, readable by all, only admins (ADMIN_IDS) can
+ * post — for announcements. Its ID is reserved (nobody can create or own a room with it).
+ */
+export const PUBLIC_ROOM_ID = 'public';
+
+/**
  * `@UserId` mentions in chat: the @ must start a word (so "a@b.com" isn't one).
  * Group 1 is what precedes the @, group 2 the user ID.
  */

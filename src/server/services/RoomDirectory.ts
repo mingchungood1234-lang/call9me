@@ -1,4 +1,5 @@
 import type { RoomSummary } from '../../shared/types';
+import { PUBLIC_ROOM_ID } from '../../shared/validation';
 import { callModel } from '../models/CallModel';
 import { friendModel } from '../models/FriendModel';
 import { roomModel } from '../models/RoomModel';
@@ -22,8 +23,8 @@ export class RoomDirectory {
 
   init(io: AppServer): void {
     this.io = io;
-    // "link" rooms are permanent: their chat history is kept on disk.
-    roomModel.isPermanent = (roomId) => roomSettingsModel.get(roomId)?.visibility === 'link';
+    // "link" rooms and the Public chat are permanent: their chat history is kept on disk.
+    roomModel.isPermanent = (roomId) => roomId === PUBLIC_ROOM_ID || roomSettingsModel.get(roomId)?.visibility === 'link';
   }
 
   /** Listed for (and free to join): everyone if public; the owner, members (shared with / joined by link) and, if private, the owner's friends. */

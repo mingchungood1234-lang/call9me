@@ -1,17 +1,37 @@
-import type { ChatMessage } from '../../shared/types';
-import { isValidRoomId, MAX_MESSAGE_LENGTH, ROOM_ID_RULES } from '../../shared/validation';
-import { $, autoFocus, el, formatTime, toast } from './dom';
+import type { ChatMessage, ChatRoomPreview } from '../../shared/types';
+import { isValidRoomId, MAX_MESSAGE_LENGTH, PUBLIC_ROOM_ID, ROOM_ID_RULES } from '../../shared/validation';
+import { $, autoFocus, avatar, el, formatTime, hueFor, toast } from './dom';
 import { renderRichText, type CustomEmojiStore } from './emoji';
 import { EmojiPicker } from './EmojiPicker';
 import { MentionAutocomplete } from './MentionAutocomplete';
 import { NOT_CONNECTED, withTimeout, type AppSocket } from './socket';
 
-const LAST_ROOM_KEY = 'call9me:lastRoom';
+/** How a room is named in the list and header. */
+export function roomTitle(roomId: string): string {
+  return roomId === PUBLIC_ROOM_ID ? '📢 Public chat' : `#${roomId}`;
+}
 
-/** Public chat room UI: join a room by ID, see members, send/receive messages. */
+/** "14:05" today, else a short date. */
+function listTime(timestamp: number): string {
+  const date = new Date(timestamp);
+  return date.toDateString() === new Date().toDateString()
+    ? formatTime(timestamp)
+    : date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+}
+
+/**
+ * Chats: the list of rooms we've joined (the Public chat pinned first), each with its last
+ * message and unread count, kept live; tapping one opens its conversation (← goes back).
+ */
 export class ChatPanel {
+  /** The room whose conversation is open (null while the list is shown). */
   private currentRoom: string | null = null;
+  private readonly inbox = new Map<string, ChatRoomPreview>();
+  private readonly isAdmin = document.body.hasAttribute('data-admin');
 
+  private readonly listView = $<HTMLElement>('#chat-list-view');
+  private readonly roomView = $<HTMLElement>('#chat-room-view');
+  private readonly listEl = $<HTMLUListElement>('#chat-list');
   private readonly joinForm = $<HTMLFormElement>('#room-form');
   private readonly roomInput = $<HTMLInputElement>('#room-id');
   private readonly leaveBtn = $<HTMLButtonElement>('#leave-room-btn');
@@ -23,13 +43,22 @@ export class ChatPanel {
   private readonly messageForm = $<HTMLFormElement>('#message-form');
   private readonly messageInput = $<HTMLInputElement>('#message-input');
   private readonly sendBtn = $<HTMLButtonElement>('#send-btn');
+  private readonly readonlyNote = $<HTMLElement>('#chat-readonly');
+
+  /** Asked before leaving (e.g. to warn that an invite-only room needs its link again). */
+  beforeLeave: (roomId: string) => boolean = () => true;
+  /** More people to suggest after `@` (besides this room's members). */
+  mentionCandidates: () => string[] = () => [];
+  /** Whether the open conversation is actually on screen (then new messages count as read). */
+  isOnScreen: () => boolean = () => document.visibilityState === 'visible';
+  private roomMembers: string[] = [];
 
   constructor(
     private readonly socket: AppSocket,
     private readonly userId: string,
     private readonly emoji: CustomEmojiStore,
-    /** Called for messages from other people in the current room (for unread badges). */
-    private readonly onIncomingMessage: (message: ChatMessage) => void = () => {},
+    /** Total unread messages across all rooms (for the Chat tab badge). */
+    private readonly onUnreadChange: (total: number) => void = () => {},
   ) {
     this.messageInput.maxLength = MAX_MESSAGE_LENGTH;
     new EmojiPicker(socket, userId, emoji, this.messageInput, $<HTMLButtonElement>('#emoji-btn'), this.messageForm, (id) =>
@@ -48,77 +77,59 @@ export class ChatPanel {
       this.join(this.roomInput.value.trim());
     });
     this.leaveBtn.addEventListener('click', () => this.leave());
+    $('#chat-back-btn').addEventListener('click', () => this.back());
     this.messageForm.addEventListener('submit', (e) => {
       e.preventDefault();
       this.send();
     });
 
-    socket.on('chat:message', (message) => {
-      if (message.roomId !== this.currentRoom) return;
-      this.appendMessage(message);
-      if (!message.system && message.from !== this.userId) this.onIncomingMessage(message);
+    socket.on('chat:rooms', (rooms) => {
+      this.inbox.clear();
+      for (const room of rooms) this.inbox.set(room.id, room);
+      this.renderList();
     });
+    socket.on('chat:message', (message) => this.onMessage(message));
     socket.on('chat:members', ({ roomId, members }) => {
       if (roomId === this.currentRoom) this.renderMembers(members);
     });
     socket.on('chat:deleted', ({ roomId, by }) => {
-      if (roomId !== this.currentRoom) return;
-      // The server already took us out of the room; just reset the panel.
-      this.currentRoom = null;
-      this.rememberRoom(null);
-      this.messagesEl.replaceChildren();
-      this.membersEl.replaceChildren();
-      this.render();
+      this.inbox.delete(roomId);
+      if (roomId === this.currentRoom) this.showList();
+      this.renderList();
       toast(by === this.userId ? `#${roomId} was deleted.` : `#${roomId} was deleted by ${by}.`);
     });
 
-    this.render();
+    this.renderList();
+    this.showList();
   }
 
+  /** The open conversation's room, if any. */
   get room(): string | null {
     return this.currentRoom;
   }
 
-  /** When the app is reopened, go back to the room the user was in (they still get its notifications). */
-  restoreLastRoom(): void {
-    if (this.currentRoom) return;
-    let last: string | null = null;
-    try {
-      last = localStorage.getItem(LAST_ROOM_KEY);
-    } catch {
-      return;
-    }
-    if (last && isValidRoomId(last)) this.join(last, true);
-  }
-
-  private rememberRoom(roomId: string | null): void {
-    try {
-      if (roomId) localStorage.setItem(LAST_ROOM_KEY, roomId);
-      else localStorage.removeItem(LAST_ROOM_KEY);
-    } catch {
-      // Not remembered (private mode); the room still works for this visit.
-    }
-  }
-
-  /** Re-join the active room after a reconnect (server state was lost). */
+  /** After a reconnect the server forgot what we were viewing: open it again. */
   rejoin(): void {
     if (this.currentRoom) this.join(this.currentRoom, true);
   }
 
-  /** `key`: the invite key from a link (needed the first time for invite-only rooms). */
+  /**
+   * Opens a room's conversation, joining the room first if it isn't in our list.
+   * `key`: the invite key from a link (needed the first time for invite-only rooms).
+   */
   join(roomId: string, silent = false, key?: string): void {
     if (!isValidRoomId(roomId)) {
       toast(`Invalid room ID. ${ROOM_ID_RULES}`, 'error');
       return;
     }
-    const previous = this.currentRoom;
-    if (previous === roomId.toLowerCase() && !silent) return;
+    const id = roomId.toLowerCase();
     if (!this.socket.connected) {
-      // The current room is rejoined automatically once the connection is back (see `rejoin`).
+      // An open room is reopened automatically once the connection is back (see `rejoin`).
       if (!silent) toast(NOT_CONNECTED, 'error');
       return;
     }
-    if (previous && previous !== roomId.toLowerCase()) this.socket.emit('chat:leave', { roomId: previous });
+    const previous = this.currentRoom;
+    if (previous && previous !== id) this.socket.emit('chat:close', { roomId: previous });
 
     this.socket.emit('chat:join', { roomId, key }, withTimeout((res) => {
       if (!res.ok) {
@@ -126,28 +137,38 @@ export class ChatPanel {
         return;
       }
       this.currentRoom = res.roomId;
-      this.roomInput.value = res.roomId;
-      this.rememberRoom(res.roomId);
+      this.roomInput.value = '';
+      const entry = this.inbox.get(res.roomId) ?? { id: res.roomId, unread: 0 };
+      entry.unread = 0;
+      entry.lastMessage = [...res.history].reverse().find((m) => !m.system) ?? entry.lastMessage;
+      this.inbox.set(res.roomId, entry);
       this.messagesEl.replaceChildren();
       res.history.forEach((m) => this.appendMessage(m));
+      this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
       this.renderMembers(res.members);
-      this.render();
+      this.showRoom();
+      this.renderList();
       if (!silent) autoFocus(this.messageInput); // not on phones: it would pop the keyboard up
     }));
   }
 
-  /** Asked before leaving (e.g. to warn that an invite-only room needs its link again). */
-  beforeLeave: (roomId: string) => boolean = () => true;
-  /** More people to suggest after `@` (besides this room's members). */
-  mentionCandidates: () => string[] = () => [];
-  private roomMembers: string[] = [];
+  /** The open conversation is (back) on screen: everything in it counts as read. */
+  markRead(): void {
+    const entry = this.currentRoom ? this.inbox.get(this.currentRoom) : undefined;
+    if (!entry || !this.isOnScreen()) return;
+    if (entry.unread) {
+      entry.unread = 0;
+      this.renderList();
+    }
+    this.socket.emit('chat:read', { roomId: entry.id });
+  }
 
   /**
-   * Leaves a room for good (default: the open one): its chat, its notifications and our
-   * membership, so it drops off our Rooms list unless it's public.
+   * Leaves a room for good (default: the open one): off our list, no more notifications,
+   * membership gone, so it drops off the Rooms list too unless it's public.
    */
   leave(roomId = this.currentRoom): void {
-    if (!roomId || !this.beforeLeave(roomId)) return;
+    if (!roomId || roomId === PUBLIC_ROOM_ID || !this.beforeLeave(roomId)) return;
     if (!this.socket.connected) {
       toast(NOT_CONNECTED, 'error');
       return;
@@ -156,13 +177,114 @@ export class ChatPanel {
       if (!res.ok) toast(res.error, 'error');
       else toast(`You left #${roomId}.`);
     }));
-    if (roomId !== this.currentRoom) return;
+    this.inbox.delete(roomId);
+    if (roomId === this.currentRoom) this.showList();
+    this.renderList();
+  }
+
+  // ---- List ----
+
+  private back(): void {
+    if (this.currentRoom) this.socket.emit('chat:close', { roomId: this.currentRoom });
+    this.showList();
+  }
+
+  private showList(): void {
     this.currentRoom = null;
-    this.rememberRoom(null);
+    this.roomMembers = [];
+    this.listView.hidden = false;
+    this.roomView.hidden = true;
     this.messagesEl.replaceChildren();
     this.membersEl.replaceChildren();
-    this.render();
   }
+
+  private showRoom(): void {
+    const room = this.currentRoom;
+    if (!room) return;
+    const isPublic = room === PUBLIC_ROOM_ID;
+    const canPost = !isPublic || this.isAdmin;
+    this.listView.hidden = true;
+    this.roomView.hidden = false;
+    this.roomTitle.textContent = roomTitle(room);
+    this.leaveBtn.hidden = isPublic;
+    this.shareBtn.hidden = isPublic;
+    this.messageForm.hidden = !canPost;
+    this.readonlyNote.hidden = canPost;
+    this.messageInput.disabled = this.sendBtn.disabled = !canPost;
+    this.messageInput.placeholder = isPublic ? 'Post an announcement to everyone' : `Message #${room}`;
+  }
+
+  private onMessage(message: ChatMessage): void {
+    const entry = this.inbox.get(message.roomId) ?? { id: message.roomId, unread: 0 };
+    this.inbox.set(message.roomId, entry);
+    if (!message.system || !entry.lastMessage) entry.lastMessage = message;
+    const fromOthers = !message.system && message.from !== this.userId;
+
+    if (message.roomId === this.currentRoom) {
+      this.appendMessage(message);
+      if (fromOthers && !this.isOnScreen()) entry.unread++;
+      else if (fromOthers) this.socket.emit('chat:read', { roomId: message.roomId });
+    } else if (fromOthers) {
+      entry.unread++;
+    }
+    this.renderList();
+  }
+
+  private renderList(): void {
+    const rooms = [...this.inbox.values()].sort((a, b) => {
+      if (a.id === PUBLIC_ROOM_ID) return -1;
+      if (b.id === PUBLIC_ROOM_ID) return 1;
+      return (b.lastMessage?.timestamp ?? 0) - (a.lastMessage?.timestamp ?? 0);
+    });
+    const total = rooms.reduce((sum, r) => sum + r.unread, 0);
+    this.onUnreadChange(total);
+
+    const items = rooms.map((room) => this.renderListItem(room));
+    if (rooms.length <= 1) {
+      items.push(el('li', { className: 'empty-state', text: 'Join a room above, or open one from People → Rooms. Your rooms show up here.' }));
+    }
+    this.listEl.replaceChildren(...items);
+  }
+
+  private renderListItem(room: ChatRoomPreview): HTMLLIElement {
+    const isPublic = room.id === PUBLIC_ROOM_ID;
+    const icon = isPublic ? el('span', { className: 'avatar room-avatar chat-public-icon', text: '📢' }) : el('span', { className: 'avatar room-avatar', text: '#' });
+    if (!isPublic) icon.style.setProperty('--h', String(hueFor(room.id)));
+
+    const last = room.lastMessage;
+    let preview = isPublic ? 'Announcements for everyone' : 'No messages yet';
+    if (last) {
+      const body = last.sticker ? 'Sticker' : last.text;
+      preview = last.system ? body : `${last.from === this.userId ? 'You' : last.from}: ${body}`;
+    }
+
+    const item = el('li', { className: `chat-item${room.unread ? ' has-unread' : ''}${isPublic ? ' is-public' : ''}` }, [
+      icon,
+      el('span', { className: 'chat-item-main' }, [
+        el('span', { className: 'chat-item-top' }, [
+          el('span', { className: 'user-name', text: roomTitle(room.id) }),
+          el('time', { className: 'chat-item-time', text: last ? listTime(last.timestamp) : '' }),
+        ]),
+        el('span', { className: 'chat-item-bottom' }, [
+          el('span', { className: 'chat-item-preview', text: preview }),
+          ...(room.unread ? [el('span', { className: 'chat-unread', text: room.unread > 99 ? '99+' : String(room.unread) })] : []),
+        ]),
+      ]),
+    ]);
+    item.tabIndex = 0;
+    item.setAttribute('role', 'button');
+    item.setAttribute('aria-label', `${roomTitle(room.id)}${room.unread ? `, ${room.unread} unread` : ''}`);
+    item.addEventListener('click', () => this.join(room.id));
+    item.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        this.join(room.id);
+      }
+    });
+    return item;
+  }
+
+  // ---- Conversation ----
 
   private send(): void {
     const text = this.messageInput.value.trim();
@@ -180,26 +302,14 @@ export class ChatPanel {
     this.messageInput.value = '';
   }
 
-  private render(): void {
-    const joined = this.currentRoom !== null;
-    this.roomTitle.textContent = joined ? `#${this.currentRoom}` : 'Not in a room';
-    this.leaveBtn.hidden = !joined;
-    this.shareBtn.hidden = !joined;
-    this.messageInput.disabled = !joined;
-    this.sendBtn.disabled = !joined;
-    this.messageInput.placeholder = joined ? `Message #${this.currentRoom}` : 'Join a room to chat';
-    if (!joined) {
-      this.messagesEl.replaceChildren(
-        el('p', { className: 'empty-state', text: 'Enter a room ID above. Anyone with the same ID joins the same room.' }),
-      );
-    }
-  }
-
   private renderMembers(members: string[]): void {
     this.roomMembers = members;
     this.membersEl.replaceChildren(
-      el('span', { className: 'members-label', text: `${members.length} online:` }),
-      ...members.map((m) => el('span', { className: m === this.userId ? 'chip chip-self' : 'chip', text: m })),
+      el('span', { className: 'members-label', text: `${members.length} here now:` }),
+      ...members.map((m) => {
+        const chip = el('span', { className: m === this.userId ? 'chip chip-self' : 'chip' }, [avatar(m), document.createTextNode(m)]);
+        return chip;
+      }),
     );
   }
 
@@ -236,8 +346,7 @@ export class ChatPanel {
   }
 
   private appendMessage(message: ChatMessage): void {
-    const atBottom =
-      this.messagesEl.scrollHeight - this.messagesEl.scrollTop - this.messagesEl.clientHeight < 40;
+    const atBottom = this.messagesEl.scrollHeight - this.messagesEl.scrollTop - this.messagesEl.clientHeight < 40;
 
     if (message.system) {
       this.messagesEl.append(el('p', { className: 'msg-system', text: message.text }));

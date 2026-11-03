@@ -3,7 +3,7 @@
 <head>
   <%- include('partials/head', { title: 'Call9me — ' + userId }) %>
 </head>
-<body class="app" data-user-id="<%= userId %>" data-tab="call">
+<body class="app" data-user-id="<%= userId %>" data-tab="call"<% if (admin) { %> data-admin<% } %>>
   <script id="ice-config" type="application/json"><%- iceJson %></script>
 
   <header class="topbar">
@@ -220,18 +220,23 @@
       </div>
     </section>
 
-    <!-- Public chat -->
+    <!-- Chats: the list of joined rooms (Public chat first), and the open conversation -->
     <section class="panel chat-panel" data-panel="chat">
-      <h2>
-        <span class="panel-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 2H4a2 2 0 0 0-2 2v18l4-4h14a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2Z"/></svg></span>
-        Public chat
-      </h2>
-      <form id="room-form" class="room-form">
-        <input id="room-id" type="text" maxlength="32" autocomplete="off" autocapitalize="off" spellcheck="false"
-               placeholder="Room ID, e.g. lobby" aria-label="Room ID">
-        <button class="btn btn-primary" type="submit">Join</button>
-      </form>
+      <div id="chat-list-view" class="chat-view">
+        <h2>
+          <span class="panel-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 2H4a2 2 0 0 0-2 2v18l4-4h14a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2Z"/></svg></span>
+          Chats
+        </h2>
+        <form id="room-form" class="room-form">
+          <input id="room-id" type="text" maxlength="32" autocomplete="off" autocapitalize="off" spellcheck="false"
+                 placeholder="Join or create a room, e.g. lobby" aria-label="Room ID to join">
+          <button class="btn btn-primary" type="submit">Join</button>
+        </form>
+        <ul id="chat-list" class="chat-list" aria-label="Your chats"></ul>
+      </div>
+      <div id="chat-room-view" class="chat-view" hidden>
       <div class="room-header">
+        <button id="chat-back-btn" class="btn btn-ghost btn-small icon-only chat-back" type="button" aria-label="Back to chats" title="Back to chats">←</button>
         <strong id="room-title">Not in a room</strong>
         <span class="room-header-actions">
           <button id="share-room-btn" class="btn btn-secondary btn-small" type="button" hidden>Share</button>
@@ -248,6 +253,8 @@
                aria-label="Message" enterkeyhint="send">
         <button id="send-btn" class="btn btn-primary" type="submit" disabled>Send</button>
       </form>
+      <p id="chat-readonly" class="chat-readonly" hidden>📢 Only admins can post in the Public chat.</p>
+      </div>
     </section>
   </main>
 

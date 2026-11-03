@@ -299,7 +299,7 @@ socket.on('connect', () => {
     chat.rejoin();
   } else {
     prefillCallRoomFromUrl();
-    if (!joinRoomFromUrl(window.location.href)) chat.restoreLastRoom();
+    joinRoomFromUrl(window.location.href); // otherwise the Chat tab shows the list of chats
     if (pendingAnswer) {
       // The server delivers the ringing invite right after connecting; if it doesn't, it's over.
       const { callId } = pendingAnswer;
@@ -1009,16 +1009,16 @@ function showFriendsFromUrl(href: string): boolean {
 showFriendsFromUrl(window.location.href);
 
 // ---- Chat ----
-let unread = 0;
 const customEmoji = new CustomEmojiStore(socket);
-const chat = new ChatPanel(socket, userId, customEmoji, () => {
-  if (tabs.isVisible('chat')) return;
-  unread++;
-  tabs.setBadge('chat', unread > 99 ? '99+' : unread);
-});
-// Leaving an invite-only room you don't own means needing its link to come back.
+// The Chat tab badge is the unread total across all our rooms (kept by the chat list).
+const chat = new ChatPanel(socket, userId, customEmoji, (total) =>
+  tabs.setBadge('chat', total > 99 ? '99+' : total || null),
+);
+chat.isOnScreen = () => tabs.isVisible('chat') && document.visibilityState === 'visible';
+document.addEventListener('visibilitychange', () => chat.markRead());
 // `@` suggestions beyond the room: friends first, then everyone online.
 chat.mentionCandidates = () => [...(friends?.current.friends ?? []), ...lastUsers.map((u) => u.id)];
+// Leaving an invite-only room you don't own means needing its link to come back.
 chat.beforeLeave = (roomId) => {
   const room = rooms.find(roomId);
   if (!room || room.visibility !== 'link' || room.owner.toLowerCase() === userId.toLowerCase()) return true;
@@ -1026,10 +1026,7 @@ chat.beforeLeave = (roomId) => {
 };
 
 tabs.onChange((tab) => {
-  if (tab === 'chat') {
-    unread = 0;
-    tabs.setBadge('chat', null);
-  }
+  if (tab === 'chat') chat.markRead();
   updateCallBadge();
 });
 

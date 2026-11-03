@@ -1,5 +1,5 @@
 import type { Ack, IceCandidate, PushPayload, SessionDescription } from '../../shared/types';
-import { isValidRoomId, ROOM_ID_RULES } from '../../shared/validation';
+import { isValidRoomId, PUBLIC_ROOM_ID, ROOM_ID_RULES } from '../../shared/validation';
 import { config } from '../config';
 import { accountModel } from '../models/AccountModel';
 import { callModel, type Call } from '../models/CallModel';
@@ -242,6 +242,9 @@ export class SignalingController {
     if (user.invitedTo) return ack({ ok: false, error: 'Answer or decline your incoming call first' });
     if (user.callId) return ack({ ok: false, error: 'Leave your current call first' });
 
+    if (payload.roomId.toLowerCase() === PUBLIC_ROOM_ID) {
+      return ack({ ok: false, error: 'The Public chat has no call. Use another room ID.' });
+    }
     const denied = roomDirectory.denyReason(payload.roomId, user.id, payload.key);
     if (denied) return ack({ ok: false, error: denied });
     roomSettingsModel.claim(payload.roomId, user.id); // first to use a new ID owns it

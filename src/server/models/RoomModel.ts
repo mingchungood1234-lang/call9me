@@ -30,11 +30,18 @@ export class RoomModel {
   /** Permanent rooms keep their chat history on disk (set up by the room directory). */
   isPermanent: (roomId: string) => boolean = () => false;
 
+  /** "user|room" → when they last read it */
+  private readonly reads = new Map<string, number>();
+  private readsTimer: NodeJS.Timeout | null = null;
+  private readonly readsFile: string;
+
   constructor(
     private readonly followersFile: string,
     private readonly historyDir: string,
   ) {
+    this.readsFile = path.join(path.dirname(followersFile), 'room-reads.json');
     this.loadFollowers();
+    this.loadReads();
   }
 
   normalize(roomId: string): string {
@@ -74,6 +81,70 @@ export class RoomModel {
 
   history(roomId: string): ChatMessage[] {
     return [...(this.rooms.get(this.normalize(roomId))?.messages ?? [])];
+  }
+
+  /** A room's messages for previews: a permanent room's saved history is loaded if needed. */
+  messagesOf(roomId: string): ChatMessage[] {
+    const id = this.normalize(roomId);
+    let room = this.rooms.get(id);
+    if (!room && this.isPermanent(id)) {
+      room = { id, members: new Set(), messages: this.loadHistory(id) };
+      this.rooms.set(id, room);
+    }
+    return room?.messages ?? [];
+  }
+
+  /** The rooms this user has joined (follows), i.e. their chat list. */
+  followedBy(userId: string): string[] {
+    const key = userId.toLowerCase();
+    return [...this.followers].filter(([, users]) => [...users].some((u) => u.toLowerCase() === key)).map(([id]) => id);
+  }
+
+  isFollower(roomId: string, userId: string): boolean {
+    const key = userId.toLowerCase();
+    return [...(this.followers.get(this.normalize(roomId)) ?? [])].some((u) => u.toLowerCase() === key);
+  }
+
+  // ---- Read marks (unread counts in the chat list) ----
+
+  private readKey(userId: string, roomId: string): string {
+    return `${userId.toLowerCase()}|${this.normalize(roomId)}`;
+  }
+
+  markRead(userId: string, roomId: string): void {
+    this.reads.set(this.readKey(userId, roomId), Date.now());
+    this.scheduleReads();
+  }
+
+  /** Messages from others since this user last read the room. */
+  unreadCount(roomId: string, userId: string): number {
+    const since = this.reads.get(this.readKey(userId, roomId)) ?? 0;
+    const me = userId.toLowerCase();
+    return this.messagesOf(roomId).filter((m) => !m.system && m.timestamp > since && m.from.toLowerCase() !== me).length;
+  }
+
+  private loadReads(): void {
+    try {
+      const data: Record<string, number> = JSON.parse(fs.readFileSync(this.readsFile, 'utf8'));
+      for (const [key, at] of Object.entries(data)) this.reads.set(key, at);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') console.warn(`[rooms] could not read ${this.readsFile}:`, err);
+    }
+  }
+
+  private scheduleReads(): void {
+    if (this.readsTimer) return;
+    this.readsTimer = setTimeout(() => {
+      this.readsTimer = null;
+      try {
+        fs.mkdirSync(path.dirname(this.readsFile), { recursive: true });
+        const tmp = `${this.readsFile}.tmp`;
+        fs.writeFileSync(tmp, JSON.stringify(Object.fromEntries(this.reads)));
+        fs.renameSync(tmp, this.readsFile);
+      } catch (err) {
+        console.warn('[rooms] could not save read marks:', err);
+      }
+    }, 2000);
   }
 
   /** `sticker`: the sticker picture URL for a sticker message. */

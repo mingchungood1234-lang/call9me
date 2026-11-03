@@ -75,6 +75,10 @@ function parseTrustProxy(raw: string | undefined): boolean | number | string {
   return /^\d+$/.test(raw) ? Number(raw) : raw;
 }
 
+export function isAdmin(userId: string): boolean {
+  return config.adminIds.has(userId.toLowerCase());
+}
+
 export const config = {
   port: Number(process.env.PORT ?? 3000),
   host: process.env.HOST ?? '0.0.0.0',
@@ -109,6 +113,8 @@ export const config = {
     clientId: process.env.GOOGLE_CLIENT_ID?.trim() ?? '',
     clientSecret: process.env.GOOGLE_CLIENT_SECRET?.trim() ?? '',
   },
+  /** Who may post in the Public chat (announcements): comma-separated user IDs, case-insensitive. */
+  adminIds: new Set(list(process.env.ADMIN_IDS).map((id) => id.toLowerCase())),
   /** The site's public address (e.g. https://call.example.com); derived from each request when unset. */
   publicUrl: process.env.PUBLIC_URL?.trim().replace(/\/+$/, '') ?? '',
 };
