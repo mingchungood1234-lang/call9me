@@ -6,6 +6,10 @@
   try {
     var t = localStorage.getItem('call9me:theme');
     if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
+    // Appearance (Settings): colour theme and text size, also before first paint.
+    var p = localStorage.getItem('call9me:palette');
+    if (p && /^(ocean|forest|sunset|rose|graphite)$/.test(p)) document.documentElement.dataset.palette = p;
+    if (localStorage.getItem('call9me:text') === 'large') document.documentElement.dataset.text = 'large';
   } catch (e) {}
 </script>
 <meta name="color-scheme" content="light dark">

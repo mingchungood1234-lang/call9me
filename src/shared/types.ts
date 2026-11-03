@@ -46,6 +46,14 @@ export interface ChatMessage {
   text: string;
   timestamp: number;
   system?: boolean;
+  /** A sticker message: the sticker picture's URL (`text` is empty). */
+  sticker?: string;
+}
+
+/** One of our own stickers (a picture we added; sending it posts it big in chat). */
+export interface Sticker {
+  id: string;
+  url: string;
 }
 
 /**
@@ -70,6 +78,8 @@ export interface RoomSummary {
   followers: number;
   /** The invite key of a "link" room (only sent to people who are allowed in). */
   key?: string;
+  /** We belong to it (member, following its chat, or in it now), so we can leave it. */
+  joined?: boolean;
 }
 
 /** Our friends and pending requests (IDs as registered). */
@@ -176,6 +186,10 @@ export interface ClientToServerEvents {
   /** Claims a new room ID (we become its owner), or changes the visibility of a room we own. */
   'rooms:create': (payload: { roomId: string; visibility: RoomVisibility }, ack: Ack<{ room: RoomSummary }>) => void;
   'rooms:set-visibility': (payload: { roomId: string; visibility: RoomVisibility }, ack: Ack) => void;
+  /** Leaves a room for good: its chat, its notifications and our membership (a "link" room then needs the link again). */
+  'rooms:leave': (payload: { roomId: string }, ack: Ack) => void;
+  /** Deletes a room we own: its chat, history, members and settings (not while its call is on). */
+  'rooms:delete': (payload: { roomId: string }, ack: Ack) => void;
   /** Shares a room with friends: they may join it from then on and get an invite (and a push). */
   'rooms:share': (
     payload: { roomId: string; to: string[]; call: boolean },
@@ -192,6 +206,12 @@ export interface ClientToServerEvents {
   'status:set': (payload: { status: UserStatus }, ack: Ack) => void;
   /** Sets our profile picture (a PNG/WebP/GIF data URL; the app crops and shrinks it first), or removes it (null). */
   'profile:avatar': (payload: { image: string | null }, ack: Ack) => void;
+
+  /** Adds a picture to our sticker collection (PNG/WebP/GIF data URL, shrunk by the app first). */
+  'stickers:add': (payload: { image: string }, ack: Ack<{ sticker: Sticker }>) => void;
+  'stickers:remove': (payload: { id: string }, ack: Ack) => void;
+  /** Posts one of our stickers in a chat room. */
+  'chat:sticker': (payload: { roomId: string; stickerId: string }, ack: Ack) => void;
 
   /** Adds a custom emoji; `image` is a PNG/WebP/GIF data URL (the app shrinks pictures first). */
   'emoji:add': (payload: { name: string; image: string }, ack: Ack<{ emoji: CustomEmoji }>) => void;
@@ -228,6 +248,10 @@ export interface ServerToClientEvents {
 
   'chat:message': (message: ChatMessage) => void;
   'chat:members': (payload: { roomId: string; members: string[] }) => void;
+  /** Someone tagged us (`@ourId`) in a room's chat. */
+  'chat:mention': (payload: { from: string; roomId: string; text: string }) => void;
+  /** The owner deleted this room; everyone in it has been moved out. */
+  'chat:deleted': (payload: { roomId: string; by: string }) => void;
 
   /** A call of ours just ended (or was missed) and was added to the history. */
   'history:new': (entry: CallHistoryEntry) => void;
@@ -245,6 +269,8 @@ export interface ServerToClientEvents {
   'avatars:update': (urls: Record<string, string>) => void;
   /** Our own status (sent on connect, so every device shows the same choice). */
   'status:update': (payload: { status: UserStatus }) => void;
+  /** Our own stickers; sent on connect and whenever we add or remove one. */
+  'stickers:update': (stickers: Sticker[]) => void;
   /** All custom emoji; sent on connect and whenever one is added or removed. */
   'emoji:update': (emoji: CustomEmoji[]) => void;
 }

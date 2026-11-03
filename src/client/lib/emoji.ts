@@ -1,5 +1,5 @@
 import type { CustomEmoji } from '../../shared/types';
-import { EMOJI_SHORTCODE } from '../../shared/validation';
+import { EMOJI_SHORTCODE, MENTION_PATTERN } from '../../shared/validation';
 import { el } from './dom';
 import type { AppSocket } from './socket';
 
@@ -52,18 +52,33 @@ const JUMBO_LIMIT = 3;
 
 /**
  * Fills `target` with `text`, turning `:name:` into the custom emoji's picture. Messages
- * that are just a few emoji are marked "jumbo" (shown bigger), like most chat apps do.
+ * that are just a few emoji are marked "jumbo" (shown bigger), like most chat apps do, and
+ * `@someone` is highlighted. @returns whether the text mentions `selfId`.
  */
-export function renderRichText(target: HTMLElement, text: string, store: CustomEmojiStore): void {
+export function renderRichText(target: HTMLElement, text: string, store: CustomEmojiStore, selfId = ''): boolean {
   const nodes: Node[] = [];
   let customCount = 0;
   let unknownCount = 0;
+  let mentionsMe = false;
+  /** Plain text, with `@someone` highlighted (and `@us` highlighted more). */
+  const pushText = (chunk: string) => {
+    let last = 0;
+    for (const match of chunk.matchAll(MENTION_PATTERN)) {
+      const at = (match.index ?? 0) + match[1].length;
+      if (at > last) nodes.push(document.createTextNode(chunk.slice(last, at)));
+      const isMe = !!selfId && match[2].toLowerCase() === selfId.toLowerCase();
+      mentionsMe ||= isMe;
+      nodes.push(el('span', { className: isMe ? 'mention mention-me' : 'mention', text: `@${match[2]}` }));
+      last = at + match[2].length + 1;
+    }
+    if (last < chunk.length) nodes.push(document.createTextNode(chunk.slice(last)));
+  };
   // split() with a capture group alternates: text, name, text, name, ...
   const parts = text.split(EMOJI_SHORTCODE);
   for (let i = 0; i < parts.length; i++) {
     const part = parts[i];
     if (i % 2 === 0) {
-      if (part) nodes.push(document.createTextNode(part));
+      if (part) pushText(part);
       continue;
     }
     const emoji = store.get(part);
@@ -87,4 +102,5 @@ export function renderRichText(target: HTMLElement, text: string, store: CustomE
   const onlyEmoji = unknownCount === 0 && leftover.replace(UNICODE_EMOJI, '').trim() === '';
   const total = customCount + unicodeCount;
   target.classList.toggle('msg-jumbo', onlyEmoji && total > 0 && total <= JUMBO_LIMIT);
+  return mentionsMe;
 }

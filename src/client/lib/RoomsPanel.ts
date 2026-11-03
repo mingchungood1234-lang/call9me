@@ -21,6 +21,7 @@ export interface RoomsPanelEvents {
   onOpenChat(roomId: string): void;
   onJoinCall(roomId: string): void;
   onShare(roomId: string): void;
+  onLeave(roomId: string): void;
 }
 
 /** The Rooms directory: public rooms, friends' private rooms and our own; create rooms and set who sees them. */
@@ -106,6 +107,23 @@ export class RoomsPanel {
     }));
   }
 
+  private remove(room: RoomSummary): void {
+    const extra = room.visibility === 'link' ? ' Its saved chat history and invite link stop working too.' : '';
+    if (!window.confirm(`Delete #${room.id}? Everyone in it is moved out and the room ID becomes free.${extra}`)) return;
+    if (!this.socket.connected) {
+      toast(NOT_CONNECTED, 'error');
+      return;
+    }
+    this.socket.emit('rooms:delete', { roomId: room.id }, withTimeout((res) => {
+      if (!res.ok) {
+        toast(res.error, 'error');
+        return;
+      }
+      this.rooms = this.rooms.filter((r) => r.id !== room.id);
+      this.render();
+    }));
+  }
+
   private render(): void {
     if (this.rooms.length === 0) {
       this.listEl.replaceChildren(
@@ -151,6 +169,9 @@ export class RoomsPanel {
       );
       toggle.dataset.visibility = room.visibility;
       actions.unshift(toggle);
+      actions.push(this.button('Delete', 'btn-ghost btn-delete', `Delete #${room.id} for everyone`, () => this.remove(room)));
+    } else if (room.joined) {
+      actions.push(this.button('Leave', 'btn-ghost btn-delete', `Leave #${room.id}`, () => this.events.onLeave(room.id)));
     }
 
     const item = el('li', { className: `user-item person-row room-row ${room.visibility}` }, [

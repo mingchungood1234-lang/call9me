@@ -76,9 +76,11 @@ export class RoomModel {
     return [...(this.rooms.get(this.normalize(roomId))?.messages ?? [])];
   }
 
-  addMessage(roomId: string, from: string, text: string, system = false): ChatMessage {
+  /** `sticker`: the sticker picture URL for a sticker message. */
+  addMessage(roomId: string, from: string, text: string, system = false, sticker?: string): ChatMessage {
     const id = this.normalize(roomId);
     const message: ChatMessage = { id: randomUUID(), roomId: id, from, text, timestamp: Date.now(), system };
+    if (sticker) message.sticker = sticker;
     const room = this.rooms.get(id);
     if (room) {
       room.messages.push(message);
@@ -86,6 +88,15 @@ export class RoomModel {
       if (this.isPermanent(id)) this.scheduleHistory(id, room.messages);
     }
     return message;
+  }
+
+  /** Forgets a room completely: members, messages, followers and any saved history. */
+  deleteRoom(roomId: string): void {
+    const id = this.normalize(roomId);
+    this.rooms.delete(id);
+    if (this.followers.delete(id)) this.schedulePersist();
+    this.pendingHistory.delete(id);
+    fs.rmSync(this.historyFile(id), { force: true });
   }
 
   // ---- Permanent rooms' history ----

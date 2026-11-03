@@ -13,6 +13,19 @@ export const PIN_RULES = 'PIN must be exactly 4 digits.';
 
 export const MAX_MESSAGE_LENGTH = 500;
 
+/**
+ * `@UserId` mentions in chat: the @ must start a word (so "a@b.com" isn't one).
+ * Group 1 is what precedes the @, group 2 the user ID.
+ */
+export const MENTION_PATTERN = /(^|[^\w@])@([A-Za-z][A-Za-z0-9_]{2,19})(?!\w)/g;
+
+/** The user IDs mentioned in a message (as written, de-duplicated case-insensitively). */
+export function mentionsIn(text: string): string[] {
+  const seen = new Map<string, string>();
+  for (const match of text.matchAll(MENTION_PATTERN)) seen.set(match[2].toLowerCase(), match[2]);
+  return [...seen.values()];
+}
+
 /** Custom emoji names, used as `:name:` in messages. */
 export const EMOJI_NAME_PATTERN = /^[a-z0-9_]{2,24}$/;
 export const EMOJI_NAME_RULES = '2–24 characters: lowercase letters, digits or "_".';
@@ -21,6 +34,7 @@ export const EMOJI_SHORTCODE = /:([a-z0-9_]{2,24}):/g;
 /** Largest image accepted (bytes, after the app has shrunk it). */
 export const MAX_EMOJI_BYTES = 96 * 1024;
 export const MAX_AVATAR_BYTES = 256 * 1024;
+export const MAX_STICKER_BYTES = 256 * 1024;
 
 export function isValidEmojiName(value: unknown): value is string {
   return typeof value === 'string' && EMOJI_NAME_PATTERN.test(value);

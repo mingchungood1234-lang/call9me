@@ -3,6 +3,7 @@ import { CallController } from '../controllers/CallController';
 import { ChatController } from '../controllers/ChatController';
 import { EmojiController } from '../controllers/EmojiController';
 import { FriendController } from '../controllers/FriendController';
+import { StickerController } from '../controllers/StickerController';
 import { RoomController } from '../controllers/RoomController';
 import { SignalingController } from '../controllers/SignalingController';
 import { sessionUserId } from '../middleware/session';
@@ -24,6 +25,7 @@ export function registerSocketHandlers(io: AppServer): void {
   const friends = new FriendController(io);
   const rooms = new RoomController(io);
   const emoji = new EmojiController(io);
+  const stickers = new StickerController(io);
   CallController.signaling = signaling;
   roomDirectory.init(io);
 
@@ -45,6 +47,7 @@ export function registerSocketHandlers(io: AppServer): void {
     // tells the page which front-end build is current, so stale pages can update.
     socket.emit('app:version', { version: appVersion() });
     emoji.register(socket); // before chat, so `:name:` in history renders on the first paint
+    stickers.register(socket);
     signaling.register(socket);
     chat.register(socket);
     friends.register(socket); // also sends this user's friends and requests

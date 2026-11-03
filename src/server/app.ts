@@ -3,6 +3,7 @@ import path from 'node:path';
 import { config } from './config';
 import { avatarModel } from './models/AvatarModel';
 import { emojiModel } from './models/EmojiModel';
+import { stickerModel } from './models/StickerModel';
 import { router } from './routes';
 import { appVersion } from './services/AppVersion';
 
@@ -22,6 +23,18 @@ export function createApp(): express.Express {
     '/avatars',
     (req, res, next) => (/^\/[a-z][a-z0-9_]{2,19}\.(png|webp|gif)$/.test(req.path) ? next() : res.status(404).end()),
     express.static(avatarModel.dir, {
+      immutable: true,
+      maxAge: '365d',
+      index: false,
+      setHeaders: (res) => res.set('X-Content-Type-Options', 'nosniff'),
+    }),
+  );
+  // Stickers: <user>/<id>.<ext> only (never the index). IDs are random, so files never change.
+  app.use(
+    '/stickers',
+    (req, res, next) =>
+      /^\/[a-z][a-z0-9_]{2,19}\/[A-Za-z0-9_-]{8,24}\.(png|webp|gif)$/.test(req.path) ? next() : res.status(404).end(),
+    express.static(stickerModel.dir, {
       immutable: true,
       maxAge: '365d',
       index: false,

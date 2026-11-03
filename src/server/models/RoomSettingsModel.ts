@@ -59,6 +59,20 @@ export class RoomSettingsModel {
     this.schedulePersist();
   }
 
+  /** @returns whether they were a member. */
+  removeMember(settings: RoomSettings, userId: string): boolean {
+    const key = userId.toLowerCase();
+    const before = settings.members?.length ?? 0;
+    settings.members = settings.members?.filter((m) => m.toLowerCase() !== key);
+    const removed = (settings.members?.length ?? 0) < before;
+    if (removed) this.schedulePersist();
+    return removed;
+  }
+
+  remove(roomId: string): void {
+    if (this.rooms.delete(roomId.toLowerCase())) this.schedulePersist();
+  }
+
   isMember(settings: RoomSettings, userId: string): boolean {
     const key = userId.toLowerCase();
     return settings.members?.some((m) => m.toLowerCase() === key) ?? false;

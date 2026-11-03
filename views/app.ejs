@@ -46,6 +46,18 @@
           <span class="status-dot" data-status="invisible"></span>
           <span><strong>Invisible</strong><small>You look offline, but can use the app</small></span>
         </button>
+        <p class="menu-heading">Appearance</p>
+        <div id="palette-picker" class="palette-picker" role="radiogroup" aria-label="Colour theme">
+          <% [['violet','Violet'],['ocean','Ocean'],['forest','Forest'],['sunset','Sunset'],['rose','Rose'],['graphite','Graphite']].forEach(function (p) { %>
+          <button type="button" class="swatch" role="radio" data-palette="<%= p[0] %>" aria-checked="false" title="<%= p[1] %>">
+            <span class="swatch-color" aria-hidden="true"></span><span class="swatch-label"><%= p[1] %></span>
+          </button>
+          <% }) %>
+        </div>
+        <div id="text-size" class="mode-switch text-size-switch" role="radiogroup" aria-label="Text size">
+          <button type="button" role="radio" data-text="normal" aria-checked="true">Normal text</button>
+          <button type="button" role="radio" data-text="large" aria-checked="false">Large text</button>
+        </div>
         <% if (googleEnabled) { %>
         <p class="menu-heading">Account</p>
         <% if (googleEmail) { %>
@@ -234,7 +246,7 @@
         </button>
         <input id="message-input" type="text" autocomplete="off" placeholder="Join a room to chat" disabled
                aria-label="Message" enterkeyhint="send">
-        <button class="btn btn-primary" type="submit" disabled>Send</button>
+        <button id="send-btn" class="btn btn-primary" type="submit" disabled>Send</button>
       </form>
     </section>
   </main>

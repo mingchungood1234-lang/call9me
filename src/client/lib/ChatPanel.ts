@@ -3,6 +3,7 @@ import { isValidRoomId, MAX_MESSAGE_LENGTH, ROOM_ID_RULES } from '../../shared/v
 import { $, autoFocus, el, formatTime, toast } from './dom';
 import { renderRichText, type CustomEmojiStore } from './emoji';
 import { EmojiPicker } from './EmojiPicker';
+import { MentionAutocomplete } from './MentionAutocomplete';
 import { NOT_CONNECTED, withTimeout, type AppSocket } from './socket';
 
 const LAST_ROOM_KEY = 'call9me:lastRoom';
@@ -21,6 +22,7 @@ export class ChatPanel {
   private readonly messagesEl = $<HTMLElement>('#messages');
   private readonly messageForm = $<HTMLFormElement>('#message-form');
   private readonly messageInput = $<HTMLInputElement>('#message-input');
+  private readonly sendBtn = $<HTMLButtonElement>('#send-btn');
 
   constructor(
     private readonly socket: AppSocket,
@@ -30,11 +32,15 @@ export class ChatPanel {
     private readonly onIncomingMessage: (message: ChatMessage) => void = () => {},
   ) {
     this.messageInput.maxLength = MAX_MESSAGE_LENGTH;
-    new EmojiPicker(socket, userId, emoji, this.messageInput, $<HTMLButtonElement>('#emoji-btn'), this.messageForm);
+    new EmojiPicker(socket, userId, emoji, this.messageInput, $<HTMLButtonElement>('#emoji-btn'), this.messageForm, (id) =>
+      this.sendSticker(id),
+    );
+    // `@` suggestions: people in this room first, then whoever the app adds (friends, online).
+    new MentionAutocomplete(this.messageInput, this.messageForm, () => [...this.roomMembers, ...this.mentionCandidates()], userId);
     // A newly added custom emoji may already be used in messages on screen.
     emoji.onChange(() => {
       for (const node of this.messagesEl.querySelectorAll<HTMLElement>('.msg-text[data-raw]')) {
-        renderRichText(node, node.dataset.raw ?? '', this.emoji);
+        renderRichText(node, node.dataset.raw ?? '', this.emoji, this.userId);
       }
     });
     this.joinForm.addEventListener('submit', (e) => {
@@ -54,6 +60,16 @@ export class ChatPanel {
     });
     socket.on('chat:members', ({ roomId, members }) => {
       if (roomId === this.currentRoom) this.renderMembers(members);
+    });
+    socket.on('chat:deleted', ({ roomId, by }) => {
+      if (roomId !== this.currentRoom) return;
+      // The server already took us out of the room; just reset the panel.
+      this.currentRoom = null;
+      this.rememberRoom(null);
+      this.messagesEl.replaceChildren();
+      this.membersEl.replaceChildren();
+      this.render();
+      toast(by === this.userId ? `#${roomId} was deleted.` : `#${roomId} was deleted by ${by}.`);
     });
 
     this.render();
@@ -120,9 +136,27 @@ export class ChatPanel {
     }));
   }
 
-  leave(): void {
-    if (!this.currentRoom) return;
-    this.socket.emit('chat:leave', { roomId: this.currentRoom });
+  /** Asked before leaving (e.g. to warn that an invite-only room needs its link again). */
+  beforeLeave: (roomId: string) => boolean = () => true;
+  /** More people to suggest after `@` (besides this room's members). */
+  mentionCandidates: () => string[] = () => [];
+  private roomMembers: string[] = [];
+
+  /**
+   * Leaves a room for good (default: the open one): its chat, its notifications and our
+   * membership, so it drops off our Rooms list unless it's public.
+   */
+  leave(roomId = this.currentRoom): void {
+    if (!roomId || !this.beforeLeave(roomId)) return;
+    if (!this.socket.connected) {
+      toast(NOT_CONNECTED, 'error');
+      return;
+    }
+    this.socket.emit('rooms:leave', { roomId }, withTimeout((res) => {
+      if (!res.ok) toast(res.error, 'error');
+      else toast(`You left #${roomId}.`);
+    }));
+    if (roomId !== this.currentRoom) return;
     this.currentRoom = null;
     this.rememberRoom(null);
     this.messagesEl.replaceChildren();
@@ -152,7 +186,7 @@ export class ChatPanel {
     this.leaveBtn.hidden = !joined;
     this.shareBtn.hidden = !joined;
     this.messageInput.disabled = !joined;
-    this.messageForm.querySelector('button')!.disabled = !joined;
+    this.sendBtn.disabled = !joined;
     this.messageInput.placeholder = joined ? `Message #${this.currentRoom}` : 'Join a room to chat';
     if (!joined) {
       this.messagesEl.replaceChildren(
@@ -162,6 +196,7 @@ export class ChatPanel {
   }
 
   private renderMembers(members: string[]): void {
+    this.roomMembers = members;
     this.membersEl.replaceChildren(
       el('span', { className: 'members-label', text: `${members.length} online:` }),
       ...members.map((m) => el('span', { className: m === this.userId ? 'chip chip-self' : 'chip', text: m })),
@@ -172,8 +207,32 @@ export class ChatPanel {
   private messageText(text: string): HTMLElement {
     const node = el('div', { className: 'msg-text' });
     node.dataset.raw = text;
-    renderRichText(node, text, this.emoji);
+    // Messages that tag us stand out (the whole bubble, see .msg-mentions-me).
+    if (renderRichText(node, text, this.emoji, this.userId)) node.classList.add('msg-mentions-me');
     return node;
+  }
+
+  /** A sticker message; if its owner removed it since, say so instead of a broken picture. */
+  private stickerImage(url: string): HTMLElement {
+    const img = el('img', { className: 'msg-sticker' });
+    img.src = url;
+    img.alt = 'Sticker';
+    img.loading = 'lazy';
+    img.addEventListener('error', () => img.replaceWith(el('div', { className: 'msg-text msg-sticker-gone', text: 'Sticker removed' })), {
+      once: true,
+    });
+    return img;
+  }
+
+  private sendSticker(stickerId: string): void {
+    if (!this.currentRoom) return;
+    if (!this.socket.connected) {
+      toast(NOT_CONNECTED, 'error');
+      return;
+    }
+    this.socket.emit('chat:sticker', { roomId: this.currentRoom, stickerId }, withTimeout((res) => {
+      if (!res.ok) toast(res.error, 'error');
+    }));
   }
 
   private appendMessage(message: ChatMessage): void {
@@ -190,7 +249,7 @@ export class ChatPanel {
             el('span', { className: 'msg-author', text: mine ? 'You' : message.from }),
             el('time', { text: formatTime(message.timestamp) }),
           ]),
-          this.messageText(message.text),
+          message.sticker ? this.stickerImage(message.sticker) : this.messageText(message.text),
         ]),
       );
     }

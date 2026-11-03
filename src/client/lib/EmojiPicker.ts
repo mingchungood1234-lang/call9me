@@ -1,21 +1,23 @@
-import { EMOJI_NAME_RULES, isValidEmojiName, MAX_EMOJI_BYTES } from '../../shared/validation';
+import type { Sticker } from '../../shared/types';
+import { EMOJI_NAME_RULES, isValidEmojiName, MAX_EMOJI_BYTES, MAX_STICKER_BYTES } from '../../shared/validation';
 import { el, toast } from './dom';
 import { STANDARD_EMOJI, withEmojiStyle, type CustomEmojiStore } from './emoji';
 import { NOT_CONNECTED, withTimeout, type AppSocket } from './socket';
 
-/** Custom emoji pictures are shrunk to fit this square before upload. */
+/** Custom emoji pictures are shrunk to fit this square before upload; stickers to the larger one. */
 const EMOJI_SIZE = 96;
+const STICKER_SIZE = 320;
 
-/** Reads a picture and shrinks it to a small square PNG (small GIFs keep their animation). */
-async function prepareImage(file: File): Promise<string> {
-  if (file.type === 'image/gif' && file.size <= MAX_EMOJI_BYTES) return readAsDataUrl(file);
+/** Reads a picture and shrinks it to fit a `size` square, keeping its shape (small GIFs keep their animation). */
+async function prepareImage(file: File, size = EMOJI_SIZE, maxBytes = MAX_EMOJI_BYTES): Promise<string> {
+  if (file.type === 'image/gif' && file.size <= maxBytes) return readAsDataUrl(file);
 
   const url = URL.createObjectURL(file);
   try {
     const img = new Image();
     img.src = url;
     await img.decode();
-    const scale = Math.min(1, EMOJI_SIZE / Math.max(img.naturalWidth, img.naturalHeight));
+    const scale = Math.min(1, size / Math.max(img.naturalWidth, img.naturalHeight));
     const w = Math.max(1, Math.round(img.naturalWidth * scale));
     const h = Math.max(1, Math.round(img.naturalHeight * scale));
     const canvas = el('canvas');
@@ -27,7 +29,7 @@ async function prepareImage(file: File): Promise<string> {
     ctx.drawImage(img, 0, 0, w, h);
     const png = canvas.toDataURL('image/png');
     // Photos can still be large as PNG; WebP is much smaller where supported.
-    if (png.length * 0.75 <= MAX_EMOJI_BYTES) return png;
+    if (png.length * 0.75 <= maxBytes) return png;
     const webp = canvas.toDataURL('image/webp', 0.9);
     if (webp.startsWith('data:image/webp')) return webp;
     throw new Error('Too large');
@@ -69,6 +71,10 @@ export class EmojiPicker {
   private readonly nameInput: HTMLInputElement;
   private readonly preview: HTMLImageElement;
   private readonly addForm: HTMLFormElement;
+  private readonly stickerView: HTMLElement;
+  private readonly stickerGrid: HTMLElement;
+  private readonly stickerFile: HTMLInputElement;
+  private stickers: Sticker[] = [];
   private pendingImage: string | null = null;
 
   constructor(
@@ -78,6 +84,8 @@ export class EmojiPicker {
     private readonly input: HTMLInputElement,
     private readonly toggle: HTMLButtonElement,
     container: HTMLElement,
+    /** Sends one of our stickers to the open room. */
+    private readonly onSticker: (stickerId: string) => void,
   ) {
     // Standard emoji, grouped.
     this.standardView = el('div', { className: 'emoji-view' });
@@ -119,11 +127,31 @@ export class EmojiPicker {
     this.customView = el('div', { className: 'emoji-view', title: '' }, [this.customGrid, this.addForm]);
     this.customView.hidden = true;
 
-    this.tabs = (['Emoji', 'Custom'] as const).map((label, i) => {
+    // Our own stickers: tap to send; add from any picture.
+    this.stickerGrid = el('div', { className: 'sticker-grid' });
+    this.stickerFile = el('input');
+    this.stickerFile.type = 'file';
+    this.stickerFile.accept = 'image/png,image/jpeg,image/webp,image/gif';
+    this.stickerFile.hidden = true;
+    this.stickerFile.addEventListener('change', () => void this.onStickerChosen());
+    const addStickerBtn = el('button', { className: 'btn btn-secondary btn-small', text: 'Add a sticker from a picture' });
+    addStickerBtn.type = 'button';
+    addStickerBtn.addEventListener('click', () => this.stickerFile.click());
+    this.stickerView = el('div', { className: 'emoji-view' }, [
+      this.stickerGrid,
+      el('div', { className: 'emoji-add' }, [addStickerBtn, this.stickerFile]),
+    ]);
+    this.stickerView.hidden = true;
+    socket.on('stickers:update', (list) => {
+      this.stickers = list;
+      this.renderStickers();
+    });
+
+    this.tabs = (['Emoji', 'Custom', 'Stickers'] as const).map((label, i) => {
       const tab = el('button', { className: i === 0 ? 'active' : '', text: label });
       tab.type = 'button';
       tab.setAttribute('role', 'tab');
-      tab.addEventListener('click', () => this.showTab(i === 1));
+      tab.addEventListener('click', () => this.showTab(i));
       return tab;
     });
 
@@ -131,6 +159,7 @@ export class EmojiPicker {
       el('div', { className: 'mode-switch emoji-tabs' }, this.tabs),
       this.standardView,
       this.customView,
+      this.stickerView,
     ]);
     this.root.hidden = true;
     this.root.setAttribute('role', 'dialog');
@@ -155,6 +184,76 @@ export class EmojiPicker {
     });
     this.store.onChange(() => this.renderCustom());
     this.renderCustom();
+    this.renderStickers();
+  }
+
+  private renderStickers(): void {
+    if (this.stickers.length === 0) {
+      this.stickerGrid.replaceChildren(
+        el('p', { className: 'emoji-empty', text: 'No stickers yet. Add one from any picture — only you can send your stickers.' }),
+      );
+      return;
+    }
+    this.stickerGrid.replaceChildren(
+      ...this.stickers.map((sticker) => {
+        const img = el('img');
+        img.src = sticker.url;
+        img.alt = 'Sticker';
+        img.loading = 'lazy';
+        const send = el('button', { className: 'sticker-btn', title: 'Send this sticker' });
+        send.type = 'button';
+        send.setAttribute('aria-label', 'Send this sticker');
+        send.append(img);
+        send.addEventListener('click', () => {
+          if (this.input.disabled) {
+            toast('Join a room to chat first.', 'error');
+            return;
+          }
+          this.onSticker(sticker.id);
+          this.setOpen(false);
+        });
+        const remove = el('button', { className: 'emoji-remove', text: '×', title: 'Remove this sticker' });
+        remove.type = 'button';
+        remove.setAttribute('aria-label', 'Remove this sticker');
+        remove.addEventListener('click', (e) => {
+          e.stopPropagation();
+          this.removeSticker(sticker.id);
+        });
+        return el('span', { className: 'emoji-own' }, [send, remove]);
+      }),
+    );
+  }
+
+  private async onStickerChosen(): Promise<void> {
+    const file = this.stickerFile.files?.[0];
+    this.stickerFile.value = '';
+    if (!file) return;
+    let image: string;
+    try {
+      image = await prepareImage(file, STICKER_SIZE, MAX_STICKER_BYTES);
+    } catch {
+      toast('That picture could not be used. Try a PNG or JPEG.', 'error');
+      return;
+    }
+    if (!this.socket.connected) {
+      toast(NOT_CONNECTED, 'error');
+      return;
+    }
+    this.socket.emit('stickers:add', { image }, withTimeout((res) => {
+      if (!res.ok) toast(res.error, 'error');
+      else toast('Sticker added. Tap it to send.', 'success');
+    }));
+  }
+
+  private removeSticker(id: string): void {
+    if (!window.confirm('Remove this sticker from your collection?')) return;
+    if (!this.socket.connected) {
+      toast(NOT_CONNECTED, 'error');
+      return;
+    }
+    this.socket.emit('stickers:remove', { id }, withTimeout((res) => {
+      if (!res.ok) toast(res.error, 'error');
+    }));
   }
 
   private setOpen(open: boolean): void {
@@ -163,10 +262,9 @@ export class EmojiPicker {
     this.toggle.classList.toggle('active', open);
   }
 
-  private showTab(custom: boolean): void {
-    this.standardView.hidden = custom;
-    this.customView.hidden = !custom;
-    this.tabs.forEach((t, i) => t.classList.toggle('active', (i === 1) === custom));
+  private showTab(index: number): void {
+    [this.standardView, this.customView, this.stickerView].forEach((view, i) => (view.hidden = i !== index));
+    this.tabs.forEach((t, i) => t.classList.toggle('active', i === index));
   }
 
   /** Inserts at the cursor, keeping custom codes apart from surrounding words. */

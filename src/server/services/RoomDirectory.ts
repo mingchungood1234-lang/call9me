@@ -53,7 +53,16 @@ export class RoomDirectory {
       : `#${settings.id} is private. Only ${settings.owner}'s friends can join.`;
   }
 
-  summary(settings: RoomSettings): RoomSummary {
+  /** Belongs to the room: a member (shared / joined by link), following its chat, or in its chat now. */
+  hasJoined(settings: RoomSettings, userId: string): boolean {
+    return (
+      roomSettingsModel.isMember(settings, userId) ||
+      roomModel.isMember(settings.id, userId) ||
+      roomModel.followersOf(settings.id).some((f) => same(f, userId))
+    );
+  }
+
+  summary(settings: RoomSettings, viewer?: string): RoomSummary {
     const call = callModel.findByRoom(settings.id);
     const online = new Set(
       [...roomModel.members(settings.id), ...(call?.participants ?? [])].filter(
@@ -69,6 +78,7 @@ export class RoomDirectory {
       followers: roomModel.followersOf(settings.id).length,
       // Only ever sent to people allowed in (see listFor), so they can share the link on.
       key: settings.visibility === 'link' ? settings.key : undefined,
+      joined: viewer ? this.hasJoined(settings, viewer) : undefined,
     };
   }
 
@@ -77,7 +87,7 @@ export class RoomDirectory {
     return roomSettingsModel
       .all()
       .filter((s) => this.canSee(s, userId))
-      .map((s) => this.summary(s))
+      .map((s) => this.summary(s, userId))
       .filter((r) => r.online.length > 0 || r.followers > 0 || r.visibility === 'link' || same(r.owner, userId))
       .sort((a, b) => b.online.length - a.online.length || b.followers - a.followers || a.id.localeCompare(b.id));
   }

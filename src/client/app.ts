@@ -4,6 +4,7 @@ import { isValidRoomId, isValidUserId, MAX_AVATAR_BYTES, ROOM_ID_RULES } from '.
 import { CallManager, canShareScreen, IDLE_CALL, type CallInfo } from './lib/CallManager';
 import { CallHistoryPanel } from './lib/CallHistoryPanel';
 import { ChatPanel } from './lib/ChatPanel';
+import { currentPalette, currentTextSize, setPalette, setTextSize, type PaletteId, type TextSize } from './lib/appearance';
 import { CustomEmojiStore } from './lib/emoji';
 import { FriendsPanel } from './lib/FriendsPanel';
 import { RoomsPanel } from './lib/RoomsPanel';
@@ -179,6 +180,33 @@ settingsMenu.addEventListener('click', (e) => {
     toast(`Status: ${STATUS_LABELS[status]}.`, 'success');
   }));
 });
+// ---- Settings: appearance (colour theme + text size, remembered on this device) ----
+const palettePicker = $('#palette-picker');
+const textSizeSwitch = $('#text-size');
+function renderAppearance(): void {
+  const palette = currentPalette();
+  for (const swatch of palettePicker.querySelectorAll<HTMLButtonElement>('[data-palette]')) {
+    swatch.setAttribute('aria-checked', String(swatch.dataset.palette === palette));
+  }
+  const size = currentTextSize();
+  for (const button of textSizeSwitch.querySelectorAll<HTMLButtonElement>('[data-text]')) {
+    button.setAttribute('aria-checked', String(button.dataset.text === size));
+  }
+}
+palettePicker.addEventListener('click', (e) => {
+  const swatch = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-palette]');
+  if (!swatch) return;
+  setPalette(swatch.dataset.palette as PaletteId);
+  renderAppearance();
+});
+textSizeSwitch.addEventListener('click', (e) => {
+  const button = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-text]');
+  if (!button) return;
+  setTextSize(button.dataset.text as TextSize);
+  renderAppearance();
+});
+renderAppearance();
+
 // ---- Settings: profile picture ----
 const profileAvatar = $('#profile-avatar');
 profileAvatar.style.setProperty('--h', String(hueFor(userId)));
@@ -906,6 +934,7 @@ const rooms = new RoomsPanel(socket, userId, {
   },
   onJoinCall: (roomId) => joinRoomCall(roomId),
   onShare: (roomId) => share.open(roomId, false),
+  onLeave: (roomId) => chat.leave(roomId),
 });
 
 // ---- Sharing rooms: to friends in the app, or by link (copied automatically) ----
@@ -921,19 +950,30 @@ $('#share-room-btn').addEventListener('click', () => {
 /** A friend shared a room with us: a small card to open it (or join its call) right away. */
 const invitesEl = el('div', { className: 'invite-stack' });
 document.body.append(invitesEl);
-socket.on('rooms:shared', ({ from, roomId, call, key }) => {
-  const open = el('button', { className: 'btn btn-primary btn-small', text: call ? 'Join call' : 'Open' });
+/** A card from someone (a shared room, a mention) with an action button and "Later". */
+function showCard(from: string, text: string, actionLabel: string, onAction: () => void, detail?: string): void {
+  const open = el('button', { className: 'btn btn-primary btn-small', text: actionLabel });
   open.type = 'button';
   const dismiss = el('button', { className: 'btn btn-ghost btn-small', text: 'Later' });
   dismiss.type = 'button';
-  const card = el('div', { className: 'invite-card' }, [
-    avatar(from),
-    el('span', { className: 'invite-text', text: call ? `${from} invites you to the call in #${roomId}` : `${from} shared #${roomId} with you` }),
-    el('span', { className: 'invite-actions' }, [dismiss, open]),
-  ]);
+  const body = el('span', { className: 'invite-text', text });
+  if (detail) body.append(el('span', { className: 'invite-detail', text: detail }));
+  const card = el('div', { className: 'invite-card' }, [avatar(from), body, el('span', { className: 'invite-actions' }, [dismiss, open])]);
   card.setAttribute('role', 'status');
   open.addEventListener('click', () => {
     card.remove();
+    onAction();
+  });
+  dismiss.addEventListener('click', () => card.remove());
+  invitesEl.append(card);
+  // Keep the stack short: drop the oldest.
+  while (invitesEl.children.length > 3) invitesEl.firstElementChild?.remove();
+  navigator.vibrate?.(150);
+}
+
+socket.on('rooms:shared', ({ from, roomId, call, key }) => {
+  const text = call ? `${from} invites you to the call in #${roomId}` : `${from} shared #${roomId} with you`;
+  showCard(from, text, call ? 'Join call' : 'Open', () => {
     if (call) {
       joinRoomCall(roomId, key);
     } else {
@@ -941,9 +981,15 @@ socket.on('rooms:shared', ({ from, roomId, call, key }) => {
       tabs.show('chat');
     }
   });
-  dismiss.addEventListener('click', () => card.remove());
-  invitesEl.append(card);
-  navigator.vibrate?.(150);
+});
+
+// Tagged with @: a card unless we're already looking at that room's chat (the message is highlighted there).
+socket.on('chat:mention', ({ from, roomId, text }) => {
+  if (chat.room === roomId && tabs.isVisible('chat') && document.visibilityState === 'visible') return;
+  showCard(from, `${from} mentioned you in #${roomId}`, 'Open', () => {
+    if (chat.room !== roomId) chat.join(roomId);
+    tabs.show('chat');
+  }, text);
 });
 
 // Back from linking Google in Settings.
@@ -970,6 +1016,14 @@ const chat = new ChatPanel(socket, userId, customEmoji, () => {
   unread++;
   tabs.setBadge('chat', unread > 99 ? '99+' : unread);
 });
+// Leaving an invite-only room you don't own means needing its link to come back.
+// `@` suggestions beyond the room: friends first, then everyone online.
+chat.mentionCandidates = () => [...(friends?.current.friends ?? []), ...lastUsers.map((u) => u.id)];
+chat.beforeLeave = (roomId) => {
+  const room = rooms.find(roomId);
+  if (!room || room.visibility !== 'link' || room.owner.toLowerCase() === userId.toLowerCase()) return true;
+  return window.confirm(`Leave #${roomId}? It's invite-only: you'll need its link to come back.`);
+};
 
 tabs.onChange((tab) => {
   if (tab === 'chat') {
