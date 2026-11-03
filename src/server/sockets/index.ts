@@ -5,6 +5,7 @@ import { SignalingController } from '../controllers/SignalingController';
 import { sessionUserId } from '../middleware/session';
 import { callHistoryModel } from '../models/CallHistoryModel';
 import { userModel } from '../models/UserModel';
+import { appVersion } from '../services/AppVersion';
 import { listDirectory } from '../services/UserDirectory';
 import type { AppServer } from './types';
 import { safeAck } from './util';
@@ -28,6 +29,9 @@ export function registerSocketHandlers(io: AppServer): void {
     const userId = socket.data.userId;
     console.log(`[socket] ${userId} connected`);
 
+    // Every (re)connect — including the reconnect after a deploy restarts the server —
+    // tells the page which front-end build is current, so stale pages can update.
+    socket.emit('app:version', { version: appVersion() });
     signaling.register(socket);
     chat.register(socket);
     socket.on('users:list', (ack) => safeAck(ack)({ ok: true, users: listDirectory() }));

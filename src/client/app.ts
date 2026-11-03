@@ -9,6 +9,7 @@ import { MobileTabs } from './lib/MobileTabs';
 import { isStandalone, PushNotifications, type PushStatus } from './lib/push';
 import { NOT_CONNECTED, type AppSocket } from './lib/socket';
 import { bindThemeToggle } from './lib/theme';
+import { UpdateWatcher } from './lib/updates';
 import { lockZoomInStandalone } from './lib/zoom';
 
 lockZoomInStandalone();
@@ -58,7 +59,7 @@ const tabs = new MobileTabs('call');
 const push = new PushNotifications();
 
 function setButtonLabel(button: HTMLButtonElement, label: string, pressed?: boolean): void {
-  const span = button.querySelector('span');
+  const span = button.querySelector('.ctrl-label') ?? button.querySelector('span');
   if (span) span.textContent = label;
   else button.textContent = label;
   if (pressed !== undefined) button.setAttribute('aria-pressed', String(pressed));
@@ -98,6 +99,15 @@ renderCameraPref();
 
 // ---- Socket ----
 const socket: AppSocket = io({ autoConnect: false });
+
+// ---- App updates ----
+// The server pushes its build on every connect; an outdated page offers to reload, and does
+// so on its own only when nothing would be interrupted (no call, no unsent message, not on screen).
+const updates = new UpdateWatcher({
+  isBusy: () => callsInfo.state !== 'idle' || !!$<HTMLInputElement>('#message-input').value,
+  busyText: 'A new version of Call9me is ready. Update when you are done.',
+});
+socket.on('app:version', ({ version }) => updates.report(version));
 let takenRetries = 0;
 let hasConnected = false;
 
@@ -488,6 +498,8 @@ function renderCallState(info: CallInfo): void {
     for (const peerId of [...tiles.keys()]) removeTile(peerId);
   }
   micBtn.disabled = !calls?.hasLocalTrack('audio');
+  // In a call without microphone access: show the slashed mic, not a "Mute" that does nothing.
+  if (inCall && micBtn.disabled) setButtonLabel(micBtn, 'No mic', true);
   camBtn.disabled = !inCall || !!calls?.isSharingScreen;
   if (inCall && calls) renderCameraButton(calls.isCameraOn);
   renderTimer(info);
@@ -495,6 +507,7 @@ function renderCallState(info: CallInfo): void {
   if (wasIdle && state !== 'idle') tabs.show('call');
   updateCallBadge();
   renderUsers();
+  updates.refresh();
 }
 
 // ---- Call timer ----

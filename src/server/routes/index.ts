@@ -6,6 +6,7 @@ import { CallController } from '../controllers/CallController';
 import { PageController } from '../controllers/PageController';
 import { PushController } from '../controllers/PushController';
 import { UserController } from '../controllers/UserController';
+import { appVersion } from '../services/AppVersion';
 
 export const router = Router();
 
@@ -22,6 +23,10 @@ router.get('/sw.js', (_req, res) => {
 // JSON API
 router.post('/api/login', AuthController.login);
 router.post('/api/logout', AuthController.logout);
+router.get('/api/version', (_req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.json({ version: appVersion() });
+});
 router.get('/api/users', UserController.list);
 router.get('/api/users/:id/availability', UserController.availability);
 router.post('/api/calls/:callId/decline', CallController.decline);

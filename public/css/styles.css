@@ -455,6 +455,36 @@ body.app {
   animation: rise 0.3s ease-out;
 }
 .conn-banner #conn-banner-text { flex: 1; min-width: 0; }
+
+/* "A new version is available" (see lib/updates.ts); floats above the content and tab bar. */
+.update-banner {
+  position: fixed;
+  left: 16px;
+  right: 16px;
+  bottom: calc(16px + env(safe-area-inset-bottom));
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  width: fit-content;
+  max-width: 560px;
+  margin-inline: auto;
+  padding: 10px 10px 10px 16px;
+  border-radius: var(--radius);
+  background: var(--bg-elev);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--primary);
+  box-shadow: var(--shadow-lg);
+  font-size: 0.88rem;
+  font-weight: 500;
+  animation: rise 0.3s ease-out;
+}
+.update-banner-text { flex: 1 1 200px; }
+.update-banner-actions { display: flex; gap: 8px; margin-left: auto; }
+/* Clear of the phone tab bar (portrait and landscape); on desktop it just floats a little higher. */
+body.app .update-banner { bottom: calc(var(--tabbar-h) + 12px + env(safe-area-inset-bottom)); }
 .conn-spinner {
   flex: none;
   width: 14px;
@@ -810,6 +840,12 @@ body.in-call .call-status { background: var(--primary-soft); color: var(--primar
 .ctrl-btn:active:not(:disabled) { transform: scale(0.96); }
 .ctrl-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 .ctrl-btn.active { background: var(--text); color: var(--bg-elev); }
+.ctrl-icon { display: inline-grid; place-items: center; flex-shrink: 0; }
+/* Toggles carry an "on" and a slashed "off" icon; aria-pressed="true" means muted / camera off. */
+.ctrl-btn .icon-off, .ctrl-btn[aria-pressed='true'] .icon-on { display: none; }
+.ctrl-btn[aria-pressed='true'] .icon-off { display: block; }
+#mic-btn.active, #cam-btn.active,
+#mic-btn.active:hover:not(:disabled), #cam-btn.active:hover:not(:disabled) { background: var(--danger); color: #fff; }
 .ctrl-danger, .ctrl-danger:hover:not(:disabled) { background: var(--danger); color: #fff; }
 .ctrl-danger:hover:not(:disabled) { background: var(--danger-hover); }
 
@@ -1012,10 +1048,42 @@ html.standalone :is(input, textarea, .msg-text, .room-banner-label) { -webkit-us
   .stage.has-screen .remote-grid { grid-template-rows: minmax(0, 1fr); padding: 0; }
   .tile-fullscreen { opacity: 1; }
 
-  .call-controls { gap: 12px; flex-wrap: nowrap; background: transparent; padding: 0; }
-  .ctrl-btn { width: 56px; height: 56px; padding: 0; justify-content: center; border-radius: 50%; background: var(--surface-2); }
-  .ctrl-btn svg { width: 24px; height: 24px; }
-  .ctrl-btn span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  /* Phone call controls: big round icons with a caption underneath, so mute/camera state is obvious. */
+  .call-controls { gap: 10px; flex-wrap: nowrap; align-items: flex-start; background: transparent; padding: 0; }
+  .call-controls .ctrl-btn,
+  .call-controls .ctrl-btn:hover:not(:disabled) {
+    flex-direction: column;
+    gap: 5px;
+    min-width: 64px;
+    padding: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    color: var(--muted);
+    font-size: 0.72rem;
+  }
+  .ctrl-icon {
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    background: var(--surface-2);
+    color: var(--text);
+    box-shadow: var(--shadow-sm);
+    transition: background 0.15s, color 0.15s, transform 0.08s;
+  }
+  .ctrl-btn svg { width: 26px; height: 26px; }
+  .ctrl-btn:active:not(:disabled) { transform: none; }
+  .ctrl-btn:active:not(:disabled) .ctrl-icon { transform: scale(0.92); }
+  .call-controls .ctrl-btn.active .ctrl-icon { background: var(--text); color: var(--bg-elev); }
+  .call-controls #mic-btn.active .ctrl-icon, .call-controls #cam-btn.active .ctrl-icon { background: var(--danger); color: #fff; }
+  /* Only the round icon turns red on phones (the desktop rule colors the whole pill). */
+  .call-controls #mic-btn.active, .call-controls #cam-btn.active,
+  .call-controls #mic-btn.active:hover:not(:disabled), .call-controls #cam-btn.active:hover:not(:disabled) {
+    background: transparent;
+    color: var(--danger);
+  }
+  .ctrl-danger .ctrl-icon { width: 72px; border-radius: 28px; background: var(--danger); color: #fff; }
+  .ctrl-label { white-space: nowrap; line-height: 1.2; }
 
   .messages { min-height: 0; }
 
@@ -1091,5 +1159,7 @@ html.standalone :is(input, textarea, .msg-text, .room-banner-label) { -webkit-us
   .topbar { padding-top: 6px; padding-bottom: 6px; }
   body.in-call .dial-form, body.in-call .room-banner, .call-panel .panel-head { display: none; }
   .call-panel { gap: 8px; }
-  .ctrl-btn { width: 46px; height: 46px; }
+  .ctrl-icon { width: 46px; height: 46px; }
+  .ctrl-danger .ctrl-icon { width: 60px; }
+  .ctrl-label { display: none; }
 }

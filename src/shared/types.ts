@@ -123,6 +123,8 @@ export interface ClientToServerEvents {
 }
 
 export interface ServerToClientEvents {
+  /** The current front-end build; sent on every connect so outdated pages can offer an update. */
+  'app:version': (payload: { version: string }) => void;
   'users:update': (users: OnlineUserSummary[]) => void;
 
   'call:incoming': (payload: {

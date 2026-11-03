@@ -38,11 +38,18 @@ self.addEventListener('fetch', (event) => {
         const response = await fetch(event.request);
         if (isStatic && response.ok) {
           const copy = response.clone();
-          void caches.open(CACHE).then((cache) => cache.put(event.request, copy));
+          void caches.open(CACHE).then(async (cache) => {
+            // Keep one copy per file: drop the ones from older builds ("?v=" differs).
+            for (const old of await cache.keys(event.request, { ignoreSearch: true })) {
+              if (old.url !== event.request.url) await cache.delete(old);
+            }
+            await cache.put(event.request, copy);
+          });
         }
         return response;
       } catch {
-        const cached = await caches.match(event.request);
+        // Asset URLs carry "?v=<build>"; offline, any cached build of the file beats none.
+        const cached = await caches.match(event.request, { ignoreSearch: isStatic });
         if (cached) return cached;
         if (event.request.mode === 'navigate') {
           return new Response(

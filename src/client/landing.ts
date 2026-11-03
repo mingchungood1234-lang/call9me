@@ -3,6 +3,7 @@ import { isValidPin, isValidUserId, PIN_RULES, USER_ID_RULES } from '../shared/v
 import { $ } from './lib/dom';
 import { registerServiceWorker } from './lib/push';
 import { bindThemeToggle } from './lib/theme';
+import { UpdateWatcher } from './lib/updates';
 import { lockZoomInStandalone } from './lib/zoom';
 
 lockZoomInStandalone();
@@ -129,3 +130,6 @@ form.addEventListener('submit', async (event) => {
 });
 
 void registerServiceWorker();
+
+// Website/PWA start page: pick up new deploys, but never wipe what the user is typing.
+new UpdateWatcher({ isBusy: () => !!(idInput.value || pinInput.value) });
