@@ -3,6 +3,7 @@ import path from 'node:path';
 import { config } from '../config';
 import { AuthController } from '../controllers/AuthController';
 import { CallController } from '../controllers/CallController';
+import { GoogleAuthController } from '../controllers/GoogleAuthController';
 import { PageController } from '../controllers/PageController';
 import { PushController } from '../controllers/PushController';
 import { UserController } from '../controllers/UserController';
@@ -20,8 +21,13 @@ router.get('/sw.js', (_req, res) => {
   res.sendFile(path.join(config.rootDir, 'public', 'js', 'sw.js'));
 });
 
+// "Continue with Google" (only works when GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET are set)
+router.get('/auth/google', GoogleAuthController.start);
+router.get('/auth/google/callback', GoogleAuthController.callback);
+
 // JSON API
 router.post('/api/login', AuthController.login);
+router.post('/api/google/complete', GoogleAuthController.complete);
 router.post('/api/logout', AuthController.logout);
 router.get('/api/version', (_req, res) => {
   res.set('Cache-Control', 'no-store');

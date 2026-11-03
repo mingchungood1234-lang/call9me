@@ -2,10 +2,14 @@ import type { Request, Response } from 'express';
 import { PIN_RULES, USER_ID_RULES } from '../../shared/validation';
 import { config } from '../config';
 import { refreshSessionCookie, requestUserId } from '../middleware/session';
+import { accountModel } from '../models/AccountModel';
+import { googleEnabled, pendingGoogleFor, suggestId } from './GoogleAuthController';
 
 const ERROR_MESSAGES: Record<string, string> = {
   session: 'Please sign in to continue.',
   taken: 'This ID is already open in another tab or device.',
+  google: 'Google sign-in did not complete. Please try again.',
+  'google-off': 'Google sign-in is not set up on this server.',
 };
 
 /** Only same-site app URLs are allowed as a post-sign-in destination (no open redirects). */
@@ -22,7 +26,15 @@ export class PageController {
       res.redirect(safeNext(req.query.next));
       return;
     }
-    res.render('index', { error: ERROR_MESSAGES[code] ?? null, rules: USER_ID_RULES, pinRules: PIN_RULES });
+    // After "Continue with Google" for a new Google account: pick an ID (or link one).
+    const google = pendingGoogleFor(req);
+    res.render('index', {
+      error: ERROR_MESSAGES[code] ?? null,
+      rules: USER_ID_RULES,
+      pinRules: PIN_RULES,
+      googleEnabled: googleEnabled(),
+      googlePending: google ? { email: google.email, suggestion: suggestId(google) } : null,
+    });
   }
 
   /** GET /app — the main calling + chat page; requires a signed-in session. */
@@ -38,6 +50,11 @@ export class PageController {
     const iceJson = JSON.stringify(config.iceServers).replace(/</g, '\\u003c');
     res.set('Cache-Control', 'no-store');
     refreshSessionCookie(req, res);
-    res.render('app', { userId, iceJson });
+    res.render('app', {
+      userId,
+      iceJson,
+      googleEnabled: googleEnabled(),
+      googleEmail: accountModel.googleEmailOf(userId) ?? null,
+    });
   }
 }

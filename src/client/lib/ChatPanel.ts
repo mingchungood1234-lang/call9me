@@ -1,6 +1,8 @@
 import type { ChatMessage } from '../../shared/types';
 import { isValidRoomId, MAX_MESSAGE_LENGTH, ROOM_ID_RULES } from '../../shared/validation';
-import { $, el, formatTime, toast } from './dom';
+import { $, autoFocus, el, formatTime, toast } from './dom';
+import { renderRichText, type CustomEmojiStore } from './emoji';
+import { EmojiPicker } from './EmojiPicker';
 import { NOT_CONNECTED, withTimeout, type AppSocket } from './socket';
 
 const LAST_ROOM_KEY = 'call9me:lastRoom';
@@ -12,6 +14,8 @@ export class ChatPanel {
   private readonly joinForm = $<HTMLFormElement>('#room-form');
   private readonly roomInput = $<HTMLInputElement>('#room-id');
   private readonly leaveBtn = $<HTMLButtonElement>('#leave-room-btn');
+  /** Opening the share dialog is up to the app (see app.ts); this only shows it while in a room. */
+  private readonly shareBtn = $<HTMLButtonElement>('#share-room-btn');
   private readonly roomTitle = $<HTMLElement>('#room-title');
   private readonly membersEl = $<HTMLElement>('#room-members');
   private readonly messagesEl = $<HTMLElement>('#messages');
@@ -21,10 +25,18 @@ export class ChatPanel {
   constructor(
     private readonly socket: AppSocket,
     private readonly userId: string,
+    private readonly emoji: CustomEmojiStore,
     /** Called for messages from other people in the current room (for unread badges). */
     private readonly onIncomingMessage: (message: ChatMessage) => void = () => {},
   ) {
     this.messageInput.maxLength = MAX_MESSAGE_LENGTH;
+    new EmojiPicker(socket, userId, emoji, this.messageInput, $<HTMLButtonElement>('#emoji-btn'), this.messageForm);
+    // A newly added custom emoji may already be used in messages on screen.
+    emoji.onChange(() => {
+      for (const node of this.messagesEl.querySelectorAll<HTMLElement>('.msg-text[data-raw]')) {
+        renderRichText(node, node.dataset.raw ?? '', this.emoji);
+      }
+    });
     this.joinForm.addEventListener('submit', (e) => {
       e.preventDefault();
       this.join(this.roomInput.value.trim());
@@ -77,7 +89,8 @@ export class ChatPanel {
     if (this.currentRoom) this.join(this.currentRoom, true);
   }
 
-  join(roomId: string, silent = false): void {
+  /** `key`: the invite key from a link (needed the first time for invite-only rooms). */
+  join(roomId: string, silent = false, key?: string): void {
     if (!isValidRoomId(roomId)) {
       toast(`Invalid room ID. ${ROOM_ID_RULES}`, 'error');
       return;
@@ -91,7 +104,7 @@ export class ChatPanel {
     }
     if (previous && previous !== roomId.toLowerCase()) this.socket.emit('chat:leave', { roomId: previous });
 
-    this.socket.emit('chat:join', { roomId }, withTimeout((res) => {
+    this.socket.emit('chat:join', { roomId, key }, withTimeout((res) => {
       if (!res.ok) {
         if (!silent) toast(res.error, 'error');
         return;
@@ -103,7 +116,7 @@ export class ChatPanel {
       res.history.forEach((m) => this.appendMessage(m));
       this.renderMembers(res.members);
       this.render();
-      if (!silent) this.messageInput.focus();
+      if (!silent) autoFocus(this.messageInput); // not on phones: it would pop the keyboard up
     }));
   }
 
@@ -137,6 +150,7 @@ export class ChatPanel {
     const joined = this.currentRoom !== null;
     this.roomTitle.textContent = joined ? `#${this.currentRoom}` : 'Not in a room';
     this.leaveBtn.hidden = !joined;
+    this.shareBtn.hidden = !joined;
     this.messageInput.disabled = !joined;
     this.messageForm.querySelector('button')!.disabled = !joined;
     this.messageInput.placeholder = joined ? `Message #${this.currentRoom}` : 'Join a room to chat';
@@ -154,6 +168,14 @@ export class ChatPanel {
     );
   }
 
+  /** Message body with emoji pictures for `:name:` (kept as `data-raw` to re-render when emoji change). */
+  private messageText(text: string): HTMLElement {
+    const node = el('div', { className: 'msg-text' });
+    node.dataset.raw = text;
+    renderRichText(node, text, this.emoji);
+    return node;
+  }
+
   private appendMessage(message: ChatMessage): void {
     const atBottom =
       this.messagesEl.scrollHeight - this.messagesEl.scrollTop - this.messagesEl.clientHeight < 40;
@@ -168,7 +190,7 @@ export class ChatPanel {
             el('span', { className: 'msg-author', text: mine ? 'You' : message.from }),
             el('time', { text: formatTime(message.timestamp) }),
           ]),
-          el('div', { className: 'msg-text', text: message.text }),
+          this.messageText(message.text),
         ]),
       );
     }

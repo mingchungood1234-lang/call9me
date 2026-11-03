@@ -1,0 +1,98 @@
+import { randomBytes } from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
+import type { RoomVisibility } from '../../shared/types';
+import { config } from '../config';
+
+export interface RoomSettings {
+  /** Lowercase room ID. */
+  id: string;
+  owner: string;
+  visibility: RoomVisibility;
+  createdAt: number;
+  /** Secret in the invite link of a "link" room. */
+  key?: string;
+  /** People who joined through the invite link or had the room shared with them; they can always come back. */
+  members?: string[];
+}
+
+const newKey = () => randomBytes(12).toString('base64url');
+
+/**
+ * Who owns each room ID, who may see and join it, persisted to JSON. A room's chat and
+ * call share these settings. The first person to use an ID owns it.
+ */
+export class RoomSettingsModel {
+  private readonly rooms = new Map<string, RoomSettings>();
+  private persistTimer: NodeJS.Timeout | null = null;
+
+  constructor(private readonly file: string) {
+    this.load();
+  }
+
+  get(roomId: string): RoomSettings | undefined {
+    return this.rooms.get(roomId.toLowerCase());
+  }
+
+  all(): RoomSettings[] {
+    return [...this.rooms.values()];
+  }
+
+  /** The room's settings, creating them (owned by `userId`) if the ID is new. */
+  claim(roomId: string, userId: string, visibility: RoomVisibility = 'public'): RoomSettings {
+    const id = roomId.toLowerCase();
+    let settings = this.rooms.get(id);
+    if (!settings) {
+      settings = { id, owner: userId, visibility, createdAt: Date.now() };
+      if (visibility === 'link') settings.key = newKey();
+      this.rooms.set(id, settings);
+      this.schedulePersist();
+    }
+    return settings;
+  }
+
+  setVisibility(roomId: string, visibility: RoomVisibility): void {
+    const settings = this.get(roomId);
+    if (!settings || settings.visibility === visibility) return;
+    settings.visibility = visibility;
+    settings.key ??= visibility === 'link' ? newKey() : undefined;
+    this.schedulePersist();
+  }
+
+  isMember(settings: RoomSettings, userId: string): boolean {
+    const key = userId.toLowerCase();
+    return settings.members?.some((m) => m.toLowerCase() === key) ?? false;
+  }
+
+  addMember(settings: RoomSettings, userId: string): void {
+    if (this.isMember(settings, userId) || settings.owner.toLowerCase() === userId.toLowerCase()) return;
+    (settings.members ??= []).push(userId);
+    this.schedulePersist();
+  }
+
+  private load(): void {
+    try {
+      const list: RoomSettings[] = JSON.parse(fs.readFileSync(this.file, 'utf8'));
+      for (const room of list) this.rooms.set(room.id, room);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') console.warn(`[rooms] could not read ${this.file}:`, err);
+    }
+  }
+
+  private schedulePersist(): void {
+    if (this.persistTimer) return;
+    this.persistTimer = setTimeout(() => {
+      this.persistTimer = null;
+      try {
+        fs.mkdirSync(path.dirname(this.file), { recursive: true });
+        const tmp = `${this.file}.tmp`;
+        fs.writeFileSync(tmp, JSON.stringify([...this.rooms.values()]));
+        fs.renameSync(tmp, this.file);
+      } catch (err) {
+        console.warn(`[rooms] could not write ${this.file}:`, err);
+      }
+    }, 500);
+  }
+}
+
+export const roomSettingsModel = new RoomSettingsModel(path.join(config.dataDir, 'rooms.json'));

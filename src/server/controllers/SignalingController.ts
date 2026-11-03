@@ -3,9 +3,12 @@ import { isValidRoomId, ROOM_ID_RULES } from '../../shared/validation';
 import { config } from '../config';
 import { accountModel } from '../models/AccountModel';
 import { callModel, type Call } from '../models/CallModel';
+import { roomSettingsModel } from '../models/RoomSettingsModel';
 import { userModel, type OnlineUser } from '../models/UserModel';
+import { userStatusModel } from '../models/UserStatusModel';
 import { callHistory } from '../services/CallHistory';
 import { pushService } from '../services/PushService';
+import { roomDirectory } from '../services/RoomDirectory';
 import { listDirectory } from '../services/UserDirectory';
 import type { AppServer, AppSocket } from '../sockets/types';
 import { safeAck } from '../sockets/util';
@@ -160,8 +163,10 @@ export class SignalingController {
     return true;
   }
 
+  /** Called after every change to who's online or in which call — room call counts change with it. */
   broadcastUsers(): void {
     this.io.emit('users:update', listDirectory());
+    roomDirectory.changed();
   }
 
   // ---- Call lifecycle ----
@@ -182,6 +187,7 @@ export class SignalingController {
     if (!target && !offlineId) return ack({ ok: false, error: `User "${targetId}" is not online` });
     const calleeId = target?.id ?? offlineId!;
     if (calleeId === caller.id) return ack({ ok: false, error: 'You cannot call yourself' });
+    if (userStatusModel.get(calleeId) === 'dnd') return ack({ ok: false, error: `${calleeId} is on Do not disturb` });
 
     let call = callModel.get(caller.callId);
     if (call?.participants.has(calleeId)) return ack({ ok: false, error: `${calleeId} is already in this call` });
@@ -219,7 +225,8 @@ export class SignalingController {
     // Rings the device when the app is closed or in the background (the service worker skips it when visible).
     pushService.notify(calleeId, callPush(call, caller.id));
 
-    ack({ ok: true, callId, to: calleeId, offline: !target });
+    // An invisible callee rings like someone whose app is closed, so calling doesn't reveal them.
+    ack({ ok: true, callId, to: calleeId, offline: !target || userStatusModel.get(calleeId) === 'invisible' });
     this.emitUpdate(call);
     this.broadcastUsers();
   }
@@ -227,13 +234,17 @@ export class SignalingController {
   /** Joins the call room with this ID, opening it if nobody is there yet. */
   private joinRoom(
     user: OnlineUser | undefined,
-    payload: { roomId: string; video: boolean },
+    payload: { roomId: string; video: boolean; key?: string },
     ack: Ack<{ callId: string; roomId: string; participants: string[]; video: boolean }>,
   ): void {
     if (!user) return ack({ ok: false, error: 'Not registered' });
     if (!isValidRoomId(payload?.roomId)) return ack({ ok: false, error: `Invalid room ID. ${ROOM_ID_RULES}` });
     if (user.invitedTo) return ack({ ok: false, error: 'Answer or decline your incoming call first' });
     if (user.callId) return ack({ ok: false, error: 'Leave your current call first' });
+
+    const denied = roomDirectory.denyReason(payload.roomId, user.id, payload.key);
+    if (denied) return ack({ ok: false, error: denied });
+    roomSettingsModel.claim(payload.roomId, user.id); // first to use a new ID owns it
 
     const video = payload.video !== false;
     let call = callModel.findByRoom(payload.roomId);

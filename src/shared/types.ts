@@ -21,8 +21,18 @@ export interface IceServerConfig {
   credential?: string;
 }
 
-/** "offline": app closed, but notifications are on — calling rings their phone. */
-export type Presence = 'available' | 'busy' | 'offline';
+/**
+ * What others see. "busy": in a call. "idle" / "dnd": the status the user chose.
+ * "offline": app closed (or invisible), but notifications are on — calling rings their phone.
+ */
+export type Presence = 'available' | 'busy' | 'idle' | 'dnd' | 'offline';
+
+/**
+ * The status a user picks in Settings. "dnd": calls to them are refused and they get no
+ * notifications. "invisible": they look offline to everyone but can use the app as usual.
+ */
+export type UserStatus = 'online' | 'idle' | 'dnd' | 'invisible';
+export const USER_STATUSES: readonly UserStatus[] = ['online', 'idle', 'dnd', 'invisible'];
 
 export interface OnlineUserSummary {
   id: string;
@@ -36,6 +46,47 @@ export interface ChatMessage {
   text: string;
   timestamp: number;
   system?: boolean;
+}
+
+/**
+ * "public": listed for everyone and anyone can join. "private": listed only for the
+ * owner's friends, and only they (or people called into it) can join. "link": a permanent
+ * room (its chat history is kept) that people join only through its invite link.
+ * People a room is shared with can always join it.
+ */
+export type RoomVisibility = 'public' | 'private' | 'link';
+
+/** A room (chat + call sharing one ID) as listed in the Rooms directory. */
+export interface RoomSummary {
+  id: string;
+  /** Whoever used the ID first; only they can change the visibility. */
+  owner: string;
+  visibility: RoomVisibility;
+  /** Everyone in the room's chat or call right now (sorted). */
+  online: string[];
+  /** How many of them are in the room's call. */
+  inCall: number;
+  /** People who joined the chat and haven't left it (they get its notifications). */
+  followers: number;
+  /** The invite key of a "link" room (only sent to people who are allowed in). */
+  key?: string;
+}
+
+/** Our friends and pending requests (IDs as registered). */
+export interface FriendsState {
+  friends: string[];
+  /** Requests waiting for us to accept or decline. */
+  incoming: string[];
+  /** Requests we sent that are still pending. */
+  outgoing: string[];
+}
+
+/** A picture emoji anyone can use in chat by typing `:name:`. */
+export interface CustomEmoji {
+  name: string;
+  /** Who added it (only they can remove it). */
+  owner: string;
+  url: string;
 }
 
 export interface CallUpdate {
@@ -87,7 +138,8 @@ export interface ClientToServerEvents {
    * The ack lists the participants we must send offers to.
    */
   'call:join-room': (
-    payload: { roomId: string; video: boolean },
+    /** `key`: the invite key from a link, needed the first time for "link" rooms. */
+    payload: { roomId: string; video: boolean; key?: string },
     ack: Ack<{ callId: string; roomId: string; participants: string[]; video: boolean }>,
   ) => void;
   /**
@@ -111,7 +163,7 @@ export interface ClientToServerEvents {
   'webrtc:ice': (payload: { to: string; candidate: IceCandidate }) => void;
 
   'chat:join': (
-    payload: { roomId: string },
+    payload: { roomId: string; key?: string },
     ack: Ack<{ roomId: string; history: ChatMessage[]; members: string[] }>,
   ) => void;
   'chat:leave': (payload: { roomId: string }) => void;
@@ -120,6 +172,30 @@ export interface ClientToServerEvents {
   /** Our call history, newest first. */
   'history:list': (ack: Ack<{ entries: CallHistoryEntry[] }>) => void;
   'history:clear': (ack: Ack) => void;
+
+  /** Claims a new room ID (we become its owner), or changes the visibility of a room we own. */
+  'rooms:create': (payload: { roomId: string; visibility: RoomVisibility }, ack: Ack<{ room: RoomSummary }>) => void;
+  'rooms:set-visibility': (payload: { roomId: string; visibility: RoomVisibility }, ack: Ack) => void;
+  /** Shares a room with friends: they may join it from then on and get an invite (and a push). */
+  'rooms:share': (
+    payload: { roomId: string; to: string[]; call: boolean },
+    ack: Ack<{ sent: string[] }>,
+  ) => void;
+
+  'friends:request': (payload: { to: string }, ack: Ack<{ to: string; accepted: boolean }>) => void;
+  /** Accepts or declines a request someone sent us. */
+  'friends:respond': (payload: { from: string; accept: boolean }, ack: Ack) => void;
+  /** Withdraws a request we sent. */
+  'friends:cancel': (payload: { to: string }, ack: Ack) => void;
+  'friends:remove': (payload: { id: string }, ack: Ack) => void;
+
+  'status:set': (payload: { status: UserStatus }, ack: Ack) => void;
+  /** Sets our profile picture (a PNG/WebP/GIF data URL; the app crops and shrinks it first), or removes it (null). */
+  'profile:avatar': (payload: { image: string | null }, ack: Ack) => void;
+
+  /** Adds a custom emoji; `image` is a PNG/WebP/GIF data URL (the app shrinks pictures first). */
+  'emoji:add': (payload: { name: string; image: string }, ack: Ack<{ emoji: CustomEmoji }>) => void;
+  'emoji:remove': (payload: { name: string }, ack: Ack) => void;
 }
 
 export interface ServerToClientEvents {
@@ -155,6 +231,22 @@ export interface ServerToClientEvents {
 
   /** A call of ours just ended (or was missed) and was added to the history. */
   'history:new': (entry: CallHistoryEntry) => void;
+
+  /** The rooms we can see (public ones, our friends' private ones, our own); sent on connect and on change. */
+  'rooms:update': (rooms: RoomSummary[]) => void;
+  /** Our friends and requests; sent on connect and on change. */
+  'friends:update': (state: FriendsState) => void;
+  /** A friend shared a room with us (`call`: they invite us to its call rather than its chat). */
+  'rooms:shared': (payload: { from: string; roomId: string; call: boolean; key?: string }) => void;
+  /** Someone just sent us a friend request (for a toast). */
+  'friends:requested': (payload: { from: string }) => void;
+
+  /** Everyone's profile picture URL by lowercased user ID; sent on connect and whenever one changes. */
+  'avatars:update': (urls: Record<string, string>) => void;
+  /** Our own status (sent on connect, so every device shows the same choice). */
+  'status:update': (payload: { status: UserStatus }) => void;
+  /** All custom emoji; sent on connect and whenever one is added or removed. */
+  'emoji:update': (emoji: CustomEmoji[]) => void;
 }
 
 export interface SocketData {
@@ -187,7 +279,7 @@ export interface PushSubscriptionJSON {
 
 /** Payload the server pushes; the service worker turns it into a notification. */
 export interface PushPayload {
-  type: 'call' | 'missed-call' | 'chat';
+  type: 'call' | 'missed-call' | 'chat' | 'friend';
   title: string;
   body: string;
   /** Notifications with the same tag replace each other. */

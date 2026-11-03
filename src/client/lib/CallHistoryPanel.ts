@@ -83,7 +83,7 @@ export class CallHistoryPanel {
     }));
   }
 
-  private render(error?: string): void {
+  render(error?: string): void {
     this.clearBtn.hidden = this.entries.length === 0;
     if (this.entries.length === 0) {
       const text = error ?? (this.loaded ? 'No calls yet.' : 'Loading…');

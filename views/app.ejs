@@ -9,11 +9,51 @@
   <header class="topbar">
     <div class="topbar-brand"><span class="brand-mark small" aria-hidden="true">9</span><span class="brand-name">Call9me</span></div>
     <div class="topbar-user">
-      <div class="me-chip">
+      <button id="me-btn" class="me-chip" type="button" aria-haspopup="menu" aria-expanded="false" title="Settings: your status">
         <span id="me-avatar" class="avatar" data-hue><%= userId.charAt(0).toUpperCase() %>
-          <span id="conn-status" class="conn-dot" data-state="offline" title="Connecting…"></span>
+          <span id="conn-status" class="conn-dot" data-state="offline" data-status="online" title="Connecting…"></span>
         </span>
-        <span class="topbar-name"><%= userId %></span>
+        <span class="me-text">
+          <span class="topbar-name"><%= userId %></span>
+          <span id="me-status-label" class="me-status">Online</span>
+        </span>
+      </button>
+      <!-- Settings: status (online / idle / do not disturb / invisible) -->
+      <div id="settings-menu" class="notify-menu settings-menu" role="menu" aria-label="Settings" hidden>
+        <p class="menu-heading">Profile</p>
+        <div class="profile-row">
+          <span id="profile-avatar" class="avatar profile-avatar" data-hue><%= userId.charAt(0).toUpperCase() %></span>
+          <span class="profile-actions">
+            <button id="avatar-change-btn" class="btn btn-secondary btn-small" type="button">Change picture</button>
+            <button id="avatar-remove-btn" class="btn btn-ghost btn-small" type="button" hidden>Remove</button>
+          </span>
+          <input id="avatar-file" type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden>
+        </div>
+        <p class="menu-heading">Status</p>
+        <button type="button" role="menuitemradio" data-status="online" aria-checked="true">
+          <span class="status-dot" data-status="online"></span>
+          <span><strong>Online</strong><small>Everyone can see you and call you</small></span>
+        </button>
+        <button type="button" role="menuitemradio" data-status="idle" aria-checked="false">
+          <span class="status-dot" data-status="idle"></span>
+          <span><strong>Idle</strong><small>Shown as away; calls still ring</small></span>
+        </button>
+        <button type="button" role="menuitemradio" data-status="dnd" aria-checked="false">
+          <span class="status-dot" data-status="dnd"></span>
+          <span><strong>Do not disturb</strong><small>Calls are refused, no notifications</small></span>
+        </button>
+        <button type="button" role="menuitemradio" data-status="invisible" aria-checked="false">
+          <span class="status-dot" data-status="invisible"></span>
+          <span><strong>Invisible</strong><small>You look offline, but can use the app</small></span>
+        </button>
+        <% if (googleEnabled) { %>
+        <p class="menu-heading">Account</p>
+        <% if (googleEmail) { %>
+        <p class="menu-note">Google: <strong><%= googleEmail %></strong></p>
+        <% } else { %>
+        <a class="menu-link" href="/auth/google" role="menuitem">Link Google account<small>Sign in with Google next time</small></a>
+        <% } %>
+        <% } %>
       </div>
       <%- include('partials/theme-toggle') %>
       <button id="notify-btn" class="icon-btn" type="button" title="Notifications" aria-label="Notifications" hidden>
@@ -45,21 +85,50 @@
   <main class="layout">
     <!-- Online users -->
     <aside class="panel users-panel" data-panel="users">
-      <h2>
-        <span class="panel-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 11a3 3 0 1 0-3-3 3 3 0 0 0 3 3Zm-8 0a3 3 0 1 0-3-3 3 3 0 0 0 3 3Zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5C15 14.17 10.33 13 8 13Zm8 0c-.29 0-.62.02-.97.05A4.22 4.22 0 0 1 17 16.5V19h6v-2.5c0-2.33-4.67-3.5-7-3.5Z"/></svg></span>
-        Online <span id="users-count" class="badge">0</span>
-      </h2>
-      <p class="panel-hint">Tap a name to select, or press Call.</p>
-      <ul id="users-list" class="users-list"></ul>
-
-      <div class="history-head">
-        <h2>
-          <span class="panel-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 3a9 9 0 0 0-9 9H1l3.9 3.9L9 12H6a7 7 0 1 1 2.05 4.95l-1.42 1.42A9 9 0 1 0 13 3Zm-1 5v5l4.25 2.52.77-1.28-3.52-2.09V8H12Z"/></svg></span>
-          Recent calls
-        </h2>
-        <button id="history-clear-btn" class="btn btn-ghost btn-small" type="button" hidden>Clear</button>
+      <div id="people-views" class="mode-switch people-switch" role="tablist" aria-label="People">
+        <button type="button" role="tab" data-view="online" aria-selected="true" class="active">Online <span id="users-count" class="seg-count">0</span></button>
+        <button type="button" role="tab" data-view="friends" aria-selected="false">Friends <span id="friends-count" class="seg-count seg-alert" hidden></span></button>
+        <button type="button" role="tab" data-view="rooms" aria-selected="false">Rooms</button>
+        <button type="button" role="tab" data-view="recent" aria-selected="false">Recent</button>
       </div>
-      <ul id="history-list" class="history-list"></ul>
+
+      <!-- Online -->
+      <div class="people-view" data-view="online">
+        <p class="panel-hint">Tap a name to select, or press Call.</p>
+        <ul id="users-list" class="users-list"></ul>
+      </div>
+
+      <!-- Friends -->
+      <div class="people-view" data-view="friends" hidden>
+        <form id="friend-form" class="dial-form">
+          <input id="friend-id" type="text" maxlength="20" autocomplete="off" autocapitalize="off" spellcheck="false"
+                 placeholder="User ID to add" aria-label="User ID to add as a friend">
+          <button class="btn btn-primary" type="submit">Add</button>
+        </form>
+        <ul id="friends-list" class="users-list people-list"></ul>
+      </div>
+
+      <!-- Rooms -->
+      <div class="people-view" data-view="rooms" hidden>
+        <form id="room-create-form" class="dial-form">
+          <input id="room-create-id" type="text" maxlength="32" autocomplete="off" autocapitalize="off" spellcheck="false"
+                 placeholder="New room ID" aria-label="New room ID">
+          <button id="room-create-visibility" class="btn btn-secondary visibility-toggle" type="button"
+                  data-visibility="public" title="Public: everyone can see and join it">Public</button>
+          <button class="btn btn-primary" type="submit">Create</button>
+        </form>
+        <p class="panel-hint">Public rooms are listed for everyone. Private rooms only for your friends.</p>
+        <ul id="rooms-list" class="users-list people-list"></ul>
+      </div>
+
+      <!-- Recent calls -->
+      <div class="people-view" data-view="recent" hidden>
+        <div class="history-head">
+          <span class="panel-hint">Your last calls</span>
+          <button id="history-clear-btn" class="btn btn-ghost btn-small" type="button" hidden>Clear</button>
+        </div>
+        <ul id="history-list" class="history-list"></ul>
+      </div>
     </aside>
 
     <!-- Calling -->
@@ -89,7 +158,7 @@
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4Zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4Z"/></svg>
           Room <strong id="room-banner-id"></strong>
         </span>
-        <button id="copy-link-btn" class="btn btn-ghost btn-small" type="button">Copy invite link</button>
+        <button id="copy-link-btn" class="btn btn-ghost btn-small" type="button">Invite</button>
       </div>
       <form id="dial-form" class="dial-form">
         <input id="target-id" type="text" maxlength="20" autocomplete="off" autocapitalize="off" spellcheck="false"
@@ -152,11 +221,17 @@
       </form>
       <div class="room-header">
         <strong id="room-title">Not in a room</strong>
-        <button id="leave-room-btn" class="btn btn-ghost btn-small" type="button" hidden>Leave room</button>
+        <span class="room-header-actions">
+          <button id="share-room-btn" class="btn btn-secondary btn-small" type="button" hidden>Share</button>
+          <button id="leave-room-btn" class="btn btn-ghost btn-small" type="button" hidden>Leave room</button>
+        </span>
       </div>
       <div id="room-members" class="room-members"></div>
       <div id="messages" class="messages" aria-live="polite"></div>
       <form id="message-form" class="message-form">
+        <button id="emoji-btn" class="btn btn-secondary emoji-toggle" type="button" title="Emoji" aria-label="Emoji" aria-expanded="false">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm0 18a8 8 0 1 1 0-16 8 8 0 0 1 0 16Zm-3.5-9a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Zm7 0a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3ZM12 17.5a5.5 5.5 0 0 0 5.1-3.5H6.9a5.5 5.5 0 0 0 5.1 3.5Z"/></svg>
+        </button>
         <input id="message-input" type="text" autocomplete="off" placeholder="Join a room to chat" disabled
                aria-label="Message" enterkeyhint="send">
         <button class="btn btn-primary" type="submit" disabled>Send</button>

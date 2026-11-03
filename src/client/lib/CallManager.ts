@@ -140,7 +140,8 @@ export class CallManager {
   }
 
   /** Joins the call room with this ID (everyone using the same ID meets there). */
-  async joinRoom(roomId: string, video: boolean): Promise<void> {
+  /** `key`: the invite key from a link (needed the first time for invite-only rooms). */
+  async joinRoom(roomId: string, video: boolean, key?: string): Promise<void> {
     if (this.info.state !== 'idle') {
       this.events.onNotice('Leave the current call first.', 'error');
       return;
@@ -159,7 +160,7 @@ export class CallManager {
     }
     this.setLocalStream(stream);
 
-    this.socket.emit('call:join-room', { roomId, video }, this.callAck(session, (res) => {
+    this.socket.emit('call:join-room', { roomId, video, key }, this.callAck(session, (res) => {
       this.setInfo({ ...this.info, callId: res.callId, roomId: res.roomId, participants: res.participants });
       for (const peerId of res.participants) void this.connectTo(peerId);
     }));

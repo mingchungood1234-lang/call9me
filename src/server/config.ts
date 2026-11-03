@@ -100,4 +100,15 @@ export const config = {
   /** Contact for push services (VAPID "sub"); must be a mailto: or https: URL. */
   // Stray quotes/spaces (e.g. VAPID_SUBJECT="mailto:x" kept literally by some tools) make Apple reject every push.
   vapidSubject: (process.env.VAPID_SUBJECT ?? 'mailto:admin@call9me.local').trim().replace(/^["']|["']$/g, '').trim(),
+  /**
+   * "Continue with Google" (OAuth client from Google Cloud Console → APIs & Services →
+   * Credentials). Off unless both are set. The redirect URI to register is
+   * `<PUBLIC_URL>/auth/google/callback`.
+   */
+  google: {
+    clientId: process.env.GOOGLE_CLIENT_ID?.trim() ?? '',
+    clientSecret: process.env.GOOGLE_CLIENT_SECRET?.trim() ?? '',
+  },
+  /** The site's public address (e.g. https://call.example.com); derived from each request when unset. */
+  publicUrl: process.env.PUBLIC_URL?.trim().replace(/\/+$/, '') ?? '',
 };

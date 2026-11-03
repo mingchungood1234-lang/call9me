@@ -1,13 +1,18 @@
 import { io } from 'socket.io-client';
-import { CONNECT_ERRORS, type OnlineUserSummary, type PushTestResult } from '../shared/types';
-import { isValidRoomId, isValidUserId, ROOM_ID_RULES } from '../shared/validation';
+import { CONNECT_ERRORS, type OnlineUserSummary, type PushTestResult, type UserStatus } from '../shared/types';
+import { isValidRoomId, isValidUserId, MAX_AVATAR_BYTES, ROOM_ID_RULES } from '../shared/validation';
 import { CallManager, canShareScreen, IDLE_CALL, type CallInfo } from './lib/CallManager';
 import { CallHistoryPanel } from './lib/CallHistoryPanel';
 import { ChatPanel } from './lib/ChatPanel';
-import { $, avatar, el, formatDuration, hueFor, toast } from './lib/dom';
+import { CustomEmojiStore } from './lib/emoji';
+import { FriendsPanel } from './lib/FriendsPanel';
+import { RoomsPanel } from './lib/RoomsPanel';
+import { ShareDialog } from './lib/ShareDialog';
+import { $, avatar, avatarUrlOf, el, formatDuration, hueFor, onAvatarsChange, paintAvatar, setAvatarUrls, toast } from './lib/dom';
+import { squareImage } from './lib/images';
 import { MobileTabs } from './lib/MobileTabs';
 import { isStandalone, PushNotifications, type PushStatus } from './lib/push';
-import { NOT_CONNECTED, type AppSocket } from './lib/socket';
+import { NOT_CONNECTED, withTimeout, type AppSocket } from './lib/socket';
 import { bindThemeToggle } from './lib/theme';
 import { UpdateWatcher } from './lib/updates';
 import { lockZoomInStandalone } from './lib/zoom';
@@ -120,6 +125,111 @@ window.addEventListener('pagehide', () => {
   if (socket.connected) socket.emit('client:visibility', { visible: false });
 });
 
+// ---- Settings: your status ----
+const STATUS_LABELS: Record<UserStatus, string> = {
+  online: 'Online',
+  idle: 'Idle',
+  dnd: 'Do not disturb',
+  invisible: 'Invisible',
+};
+const meBtn = $<HTMLButtonElement>('#me-btn');
+const settingsMenu = $('#settings-menu');
+const meStatusLabel = $('#me-status-label');
+let myStatus: UserStatus = 'online';
+
+function renderMyStatus(): void {
+  connDot.dataset.status = myStatus;
+  meStatusLabel.textContent = STATUS_LABELS[myStatus];
+  for (const item of settingsMenu.querySelectorAll<HTMLButtonElement>('[data-status]')) {
+    item.setAttribute('aria-checked', String(item.dataset.status === myStatus));
+  }
+}
+
+function setSettingsOpen(open: boolean): void {
+  settingsMenu.hidden = !open;
+  meBtn.setAttribute('aria-expanded', String(open));
+}
+meBtn.addEventListener('click', () => setSettingsOpen(settingsMenu.hidden));
+document.addEventListener('click', (e) => {
+  if (!settingsMenu.hidden && !(e.target as HTMLElement).closest('#settings-menu, #me-btn')) setSettingsOpen(false);
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !settingsMenu.hidden) {
+    setSettingsOpen(false);
+    meBtn.focus();
+  }
+});
+settingsMenu.addEventListener('click', (e) => {
+  const item = (e.target as HTMLElement).closest<HTMLButtonElement>('button[data-status]');
+  if (!item) return;
+  const status = item.dataset.status as UserStatus;
+  setSettingsOpen(false);
+  if (status === myStatus) return;
+  if (!socket.connected) {
+    toast(NOT_CONNECTED, 'error');
+    return;
+  }
+  socket.emit('status:set', { status }, withTimeout((res) => {
+    if (!res.ok) {
+      toast(res.error, 'error');
+      return;
+    }
+    myStatus = status;
+    renderMyStatus();
+    toast(`Status: ${STATUS_LABELS[status]}.`, 'success');
+  }));
+});
+// ---- Settings: profile picture ----
+const profileAvatar = $('#profile-avatar');
+profileAvatar.style.setProperty('--h', String(hueFor(userId)));
+const avatarFile = $<HTMLInputElement>('#avatar-file');
+const avatarRemoveBtn = $<HTMLButtonElement>('#avatar-remove-btn');
+$('#avatar-change-btn').addEventListener('click', () => avatarFile.click());
+
+function sendAvatar(image: string | null): void {
+  if (!socket.connected) {
+    toast(NOT_CONNECTED, 'error');
+    return;
+  }
+  socket.emit('profile:avatar', { image }, withTimeout((res) => {
+    if (!res.ok) toast(res.error, 'error');
+    else toast(image ? 'Profile picture updated.' : 'Profile picture removed.', 'success');
+  }));
+}
+avatarFile.addEventListener('change', async () => {
+  const file = avatarFile.files?.[0];
+  avatarFile.value = '';
+  if (!file) return;
+  try {
+    sendAvatar(await squareImage(file, 256, MAX_AVATAR_BYTES));
+  } catch {
+    toast('That picture could not be used. Try a PNG or JPEG.', 'error');
+  }
+});
+avatarRemoveBtn.addEventListener('click', () => {
+  if (window.confirm('Remove your profile picture?')) sendAvatar(null);
+});
+
+/** Everyone's pictures changed (or arrived): repaint every avatar on screen. */
+function repaintAvatars(): void {
+  paintAvatar($('#me-avatar'), userId);
+  paintAvatar(profileAvatar, userId);
+  avatarRemoveBtn.hidden = !avatarUrlOf(userId);
+  for (const [peerId, tile] of tiles) paintAvatar(tile.root.querySelector<HTMLElement>('.tile-avatar')!, peerId);
+  renderUsers();
+  friends?.render();
+  callHistory.render();
+}
+socket.on('avatars:update', setAvatarUrls);
+onAvatarsChange(repaintAvatars);
+
+// The server sends our saved status on every connect (it's shared by all our devices).
+socket.on('status:update', ({ status }) => {
+  myStatus = status;
+  renderMyStatus();
+});
+renderMyStatus();
+
 // ---- Connection status ----
 // A banner (not just the dot) says when we're offline; the first connect gets a moment before it shows.
 let bannerTimer: ReturnType<typeof setTimeout> | undefined;
@@ -200,63 +310,100 @@ socket.on('connect_error', (err) => {
 
 // ---- Online users ----
 let lastUsers: OnlineUserSummary[] = [];
+/** Set up further down (see "Friends"); the online list shows who's a friend. */
+let friends: FriendsPanel | undefined;
 socket.on('users:update', (users) => {
   lastUsers = users;
   renderUsers();
 });
 
 const PRESENCE_LABELS: Record<OnlineUserSummary['presence'], string> = {
-  available: 'Available',
+  available: 'Online',
   busy: 'In a call',
+  idle: 'Idle',
+  dnd: 'Do not disturb',
   offline: 'Offline · rings their phone',
 };
+/** Presences that can't take a call right now. */
+const UNCALLABLE: ReadonlySet<OnlineUserSummary['presence']> = new Set(['busy', 'dnd']);
+
+/** Phone "People" tab: pending friend requests matter more than the online count. */
+function updateUsersBadge(onlineCount: number): void {
+  const requests = friends?.current.incoming.length ?? 0;
+  tabs.setBadge('users', requests ? `+${requests}` : onlineCount || null);
+}
 
 function renderUsers(): void {
   const others = lastUsers.filter((u) => u.id !== userId);
   const onlineCount = others.filter((u) => u.presence !== 'offline').length;
   usersCount.textContent = String(onlineCount);
-  tabs.setBadge('users', onlineCount || null);
-  if (others.length === 0) {
-    usersList.replaceChildren(el('li', { className: 'empty-state', text: 'Nobody else is online yet.' }));
-    return;
-  }
-  const inCall = calls.state === 'in-call';
-  usersList.replaceChildren(
-    ...others.map((u) => {
-      const callBtn = el('button', {
-        className: 'btn btn-small btn-primary user-call-btn',
-        text: inCall ? 'Add' : 'Call',
-        title: inCall ? `Add ${u.id} to the call` : `Call ${u.id}`,
-      });
-      callBtn.type = 'button';
-      callBtn.disabled = u.presence === 'busy' || calls.state === 'incoming' || !socket.connected;
-      callBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        targetInput.value = u.id;
-        startCall();
-      });
+  updateUsersBadge(onlineCount);
+  friends?.render(); // friends' presence comes from this list
 
-      const item = el('li', { className: `user-item ${u.presence}` }, [
-        avatar(u.id, [el('span', { className: 'presence-dot', title: u.presence })]),
-        el('span', { className: 'user-meta' }, [
-          el('span', { className: 'user-name', text: u.id }),
-          el('span', { className: 'user-presence', text: PRESENCE_LABELS[u.presence] }),
-        ]),
-        callBtn,
-      ]);
-      item.tabIndex = 0;
-      const select = () => {
-        targetInput.value = u.id;
-        if (tabs.isPhone) tabs.show('call');
-        else targetInput.focus();
-      };
-      item.addEventListener('click', select);
-      item.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') select();
-      });
-      return item;
-    }),
-  );
+  // Friends who are online first, then everyone else who is publicly online (or reachable).
+  const friendsOnline = others.filter((u) => u.presence !== 'offline' && friends?.isFriend(u.id));
+  const everyone = others.filter((u) => !friendsOnline.includes(u));
+  const items: HTMLElement[] = [];
+  if (friendsOnline.length) {
+    items.push(el('li', { className: 'list-heading', text: `Friends online (${friendsOnline.length})` }));
+    items.push(...friendsOnline.map(renderUserItem));
+  }
+  items.push(el('li', { className: 'list-heading', text: friendsOnline.length ? 'Everyone else' : 'Everyone online' }));
+  if (everyone.length) items.push(...everyone.map(renderUserItem));
+  else items.push(el('li', { className: 'empty-state', text: friendsOnline.length ? 'Nobody else right now.' : 'Nobody else is online yet.' }));
+  usersList.replaceChildren(...items);
+}
+
+function renderUserItem(u: OnlineUserSummary): HTMLLIElement {
+  const inCall = calls.state === 'in-call';
+  const callBtn = el('button', {
+    className: 'btn btn-small btn-primary user-call-btn',
+    text: inCall ? 'Add' : 'Call',
+    title: inCall ? `Add ${u.id} to the call` : `Call ${u.id}`,
+  });
+  callBtn.type = 'button';
+  callBtn.disabled = UNCALLABLE.has(u.presence) || calls.state === 'incoming' || !socket.connected;
+  callBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    targetInput.value = u.id;
+    startCall();
+  });
+
+  const isFriend = friends?.isFriend(u.id) ?? false;
+  const actions: HTMLElement[] = [callBtn];
+  if (friends && !isFriend && !friends.isPending(u.id)) {
+    const addBtn = el('button', { className: 'btn btn-small btn-ghost icon-only', text: '+', title: `Add ${u.id} as a friend` });
+    addBtn.type = 'button';
+    addBtn.setAttribute('aria-label', `Add ${u.id} as a friend`);
+    addBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      friends?.request(u.id);
+    });
+    actions.unshift(addBtn);
+  }
+
+  const item = el('li', { className: `user-item ${u.presence}` }, [
+    avatar(u.id, [el('span', { className: 'presence-dot', title: u.presence })]),
+    el('span', { className: 'user-meta' }, [
+      el('span', { className: 'user-name', text: u.id }),
+      el('span', {
+        className: 'user-presence',
+        text: PRESENCE_LABELS[u.presence] + (isFriend ? ' · Friend' : friends?.isPending(u.id) ? ' · Request pending' : ''),
+      }),
+    ]),
+    el('span', { className: 'row-actions' }, actions),
+  ]);
+  item.tabIndex = 0;
+  const select = () => {
+    targetInput.value = u.id;
+    if (tabs.isPhone) tabs.show('call');
+    else targetInput.focus();
+  };
+  item.addEventListener('click', select);
+  item.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') select();
+  });
+  return item;
 }
 
 // ---- Participant tiles ----
@@ -283,8 +430,10 @@ function ensureTile(peerId: string): Tile {
   fullscreenBtn.type = 'button';
   fullscreenBtn.addEventListener('click', () => enterFullscreen(root, video));
 
+  const tileAvatar = el('div', { className: 'tile-avatar', text: peerId.charAt(0).toUpperCase() });
+  paintAvatar(tileAvatar, peerId); // their profile picture while their camera is off
   const root = el('div', { className: 'tile' }, [
-    el('div', { className: 'tile-avatar', text: peerId.charAt(0).toUpperCase() }),
+    tileAvatar,
     video,
     el('div', { className: 'tile-label' }, [el('span', { className: 'tile-name', text: peerId }), status]),
     fullscreenBtn,
@@ -583,27 +732,20 @@ function joinCallRoom(): void {
     return;
   }
   if (tabs.isPhone) tabs.show('call');
-  void calls.joinRoom(roomId, cameraPref);
+  // An invite link's key (see prefillCallRoomFromUrl) is used once, for the room it came with.
+  const key = pendingCallKey?.roomId === roomId.toLowerCase() ? pendingCallKey.key : undefined;
+  pendingCallKey = null;
+  void calls.joinRoom(roomId, cameraPref, key);
 }
+let pendingCallKey: { roomId: string; key: string } | null = null;
 callRoomForm.addEventListener('submit', (e) => {
   e.preventDefault();
   joinCallRoom();
 });
 
-copyLinkBtn.addEventListener('click', async () => {
-  if (!callsInfo.roomId) return;
-  const url = `${window.location.origin}/app?call=${encodeURIComponent(callsInfo.roomId)}`;
-  try {
-    // Phones get the native share sheet; desktops copy to the clipboard.
-    if (tabs.isPhone && navigator.share) {
-      await navigator.share({ title: 'Join my Call9me room', text: `Join room #${callsInfo.roomId}`, url });
-      return;
-    }
-    await navigator.clipboard.writeText(url);
-    toast('Invite link copied.', 'success');
-  } catch (err) {
-    if ((err as DOMException)?.name !== 'AbortError') window.prompt('Copy this invite link:', url);
-  }
+// "Invite": pick friends to ring into the room's call; the link is copied for anyone else.
+copyLinkBtn.addEventListener('click', () => {
+  if (callsInfo.roomId) share.open(callsInfo.roomId, true);
 });
 
 // ---- Answering from a call notification ----
@@ -641,9 +783,12 @@ function tryAutoAnswer(): boolean {
 }
 
 /** `/app?call=xyz` (an invite link) prefills the room; joining needs a tap (camera + audio autoplay). */
-function prefillCallRoomFromUrl(): void {
-  const room = new URL(window.location.href).searchParams.get('call');
+function prefillCallRoomFromUrl(href = window.location.href): void {
+  const params = new URL(href, window.location.origin).searchParams;
+  const room = params.get('call');
   if (!room || !isValidRoomId(room)) return;
+  const key = params.get('key');
+  pendingCallKey = key ? { roomId: room.toLowerCase(), key } : null;
   callRoomInput.value = room;
   setCallMode('room');
   tabs.show('call');
@@ -710,9 +855,117 @@ const callHistory = new CallHistoryPanel(socket, (entry) => {
   }
 });
 
+// ---- People panel views: Online / Friends / Rooms / Recent ----
+type PeopleView = 'online' | 'friends' | 'rooms' | 'recent';
+const peopleSwitch = $('#people-views');
+function showPeopleView(view: PeopleView): void {
+  for (const button of peopleSwitch.querySelectorAll<HTMLButtonElement>('button[data-view]')) {
+    const selected = button.dataset.view === view;
+    button.classList.toggle('active', selected);
+    button.setAttribute('aria-selected', String(selected));
+  }
+  for (const panel of document.querySelectorAll<HTMLElement>('.people-view')) panel.hidden = panel.dataset.view !== view;
+}
+peopleSwitch.addEventListener('click', (e) => {
+  const button = (e.target as HTMLElement).closest<HTMLButtonElement>('button[data-view]');
+  if (button) showPeopleView(button.dataset.view as PeopleView);
+});
+
+// ---- Friends ----
+const friendsCount = $('#friends-count');
+friends = new FriendsPanel(socket, userId, {
+  presenceOf: (id) => lastUsers.find((u) => u.id.toLowerCase() === id.toLowerCase())?.presence ?? 'away',
+  onCall: (id) => {
+    setCallMode('user');
+    targetInput.value = id;
+    startCall();
+  },
+  onChange: (state) => {
+    friendsCount.hidden = state.incoming.length === 0;
+    friendsCount.textContent = String(state.incoming.length);
+    renderUsers();
+  },
+});
+
+// ---- Rooms directory ----
+function joinRoomCall(roomId: string, key?: string): void {
+  if (callsInfo.state !== 'idle') {
+    toast('Leave the current call first.', 'error');
+    return;
+  }
+  callRoomInput.value = roomId;
+  if (key) pendingCallKey = { roomId: roomId.toLowerCase(), key };
+  setCallMode('room');
+  joinCallRoom();
+}
+
+const rooms = new RoomsPanel(socket, userId, {
+  onOpenChat: (roomId) => {
+    chat.join(roomId);
+    tabs.show('chat');
+  },
+  onJoinCall: (roomId) => joinRoomCall(roomId),
+  onShare: (roomId) => share.open(roomId, false),
+});
+
+// ---- Sharing rooms: to friends in the app, or by link (copied automatically) ----
+const share = new ShareDialog(socket, {
+  friends: () => friends?.current.friends ?? [],
+  presenceOf: (id) => lastUsers.find((u) => u.id.toLowerCase() === id.toLowerCase())?.presence ?? 'away',
+  keyOf: (roomId) => rooms.find(roomId)?.key,
+});
+$('#share-room-btn').addEventListener('click', () => {
+  if (chat.room) share.open(chat.room, false);
+});
+
+/** A friend shared a room with us: a small card to open it (or join its call) right away. */
+const invitesEl = el('div', { className: 'invite-stack' });
+document.body.append(invitesEl);
+socket.on('rooms:shared', ({ from, roomId, call, key }) => {
+  const open = el('button', { className: 'btn btn-primary btn-small', text: call ? 'Join call' : 'Open' });
+  open.type = 'button';
+  const dismiss = el('button', { className: 'btn btn-ghost btn-small', text: 'Later' });
+  dismiss.type = 'button';
+  const card = el('div', { className: 'invite-card' }, [
+    avatar(from),
+    el('span', { className: 'invite-text', text: call ? `${from} invites you to the call in #${roomId}` : `${from} shared #${roomId} with you` }),
+    el('span', { className: 'invite-actions' }, [dismiss, open]),
+  ]);
+  card.setAttribute('role', 'status');
+  open.addEventListener('click', () => {
+    card.remove();
+    if (call) {
+      joinRoomCall(roomId, key);
+    } else {
+      chat.join(roomId, false, key);
+      tabs.show('chat');
+    }
+  });
+  dismiss.addEventListener('click', () => card.remove());
+  invitesEl.append(card);
+  navigator.vibrate?.(150);
+});
+
+// Back from linking Google in Settings.
+if (new URLSearchParams(window.location.search).get('google') === 'linked') {
+  toast('Google account linked. You can sign in with Google from now on.', 'success', 6000);
+  history.replaceState(null, '', '/app');
+}
+
+/** `/app?friends=1` (from a friend-request notification) opens the Friends list. */
+function showFriendsFromUrl(href: string): boolean {
+  if (!new URL(href, window.location.origin).searchParams.has('friends')) return false;
+  showPeopleView('friends');
+  tabs.show('users');
+  if (window.location.search) history.replaceState(null, '', '/app');
+  return true;
+}
+showFriendsFromUrl(window.location.href);
+
 // ---- Chat ----
 let unread = 0;
-const chat = new ChatPanel(socket, userId, () => {
+const customEmoji = new CustomEmojiStore(socket);
+const chat = new ChatPanel(socket, userId, customEmoji, () => {
   if (tabs.isVisible('chat')) return;
   unread++;
   tabs.setBadge('chat', unread > 99 ? '99+' : unread);
@@ -729,9 +982,10 @@ tabs.onChange((tab) => {
 /** `/app?room=xyz` (e.g. from a chat notification) opens that room. */
 /** @returns whether the URL named a room to open. */
 function joinRoomFromUrl(href: string): boolean {
-  const room = new URL(href, window.location.origin).searchParams.get('room');
+  const params = new URL(href, window.location.origin).searchParams;
+  const room = params.get('room');
   if (!room || !isValidRoomId(room)) return false;
-  chat.join(room);
+  chat.join(room, false, params.get('key') ?? undefined); // the key lets us into invite-only rooms
   tabs.show('chat');
   if (window.location.search) history.replaceState(null, '', '/app');
   return true;
@@ -839,7 +1093,9 @@ $('#notify-off-btn').addEventListener('click', async () => {
 
 navigator.serviceWorker?.addEventListener('message', (event: MessageEvent<{ type?: string; url?: string }>) => {
   if (event.data?.type !== 'open-url' || !event.data.url) return;
+  if (showFriendsFromUrl(event.data.url)) return;
   joinRoomFromUrl(event.data.url);
+  prefillCallRoomFromUrl(event.data.url); // a shared call room (`?call=…`)
   setPendingAnswer(event.data.url);
   if (!new URL(event.data.url, window.location.origin).searchParams.has('room')) tabs.show('call');
 });

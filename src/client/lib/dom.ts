@@ -17,6 +17,14 @@ export function el<K extends keyof HTMLElementTagNameMap>(
   return node;
 }
 
+/**
+ * Focus for convenience when a page or panel opens — but not on touch screens, where
+ * focusing a text field pops the keyboard up (and iOS offers saved passwords) on its own.
+ */
+export function autoFocus(element: HTMLElement): void {
+  if (!window.matchMedia('(pointer: coarse)').matches) element.focus();
+}
+
 /** A stable hue (0–359) per user ID, so everyone keeps the same avatar color. */
 export function hueFor(id: string): number {
   let hash = 0;
@@ -24,10 +32,43 @@ export function hueFor(id: string): number {
   return hash % 360;
 }
 
+/** Profile picture URLs by lowercased user ID (kept current by the app from `avatars:update`). */
+const avatarUrls = new Map<string, string>();
+const avatarListeners: (() => void)[] = [];
+
+export function setAvatarUrls(urls: Record<string, string>): void {
+  avatarUrls.clear();
+  for (const [key, url] of Object.entries(urls)) avatarUrls.set(key, url);
+  avatarListeners.forEach((l) => l());
+}
+
+export function avatarUrlOf(id: string): string | undefined {
+  return avatarUrls.get(id.toLowerCase());
+}
+
+/** Called when anyone's picture changes, to redraw lists. */
+export function onAvatarsChange(listener: () => void): void {
+  avatarListeners.push(listener);
+}
+
+/** Shows a user's picture in `node` (or their initial on a colored circle when they have none). */
+export function paintAvatar(node: HTMLElement, id: string): void {
+  const url = avatarUrlOf(id);
+  node.querySelector(':scope > .avatar-img')?.remove();
+  node.classList.toggle('has-img', !!url);
+  if (!url) return;
+  const img = el('img', { className: 'avatar-img' });
+  img.src = url;
+  img.alt = '';
+  img.decoding = 'async';
+  node.prepend(img);
+}
+
 export function avatar(id: string, extra: Node[] = []): HTMLSpanElement {
   const node = el('span', { className: 'avatar', text: id.charAt(0).toUpperCase() }, extra);
   node.dataset.hue = '';
   node.style.setProperty('--h', String(hueFor(id)));
+  paintAvatar(node, id);
   return node;
 }
 

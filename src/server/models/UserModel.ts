@@ -1,4 +1,5 @@
-import type { OnlineUserSummary } from '../../shared/types';
+import type { OnlineUserSummary, Presence } from '../../shared/types';
+import { userStatusModel } from './UserStatusModel';
 
 export interface OnlineUser {
   id: string;
@@ -46,10 +47,25 @@ export class UserModel {
     return user.callId !== null || user.invitedTo !== null;
   }
 
+  /** Every connected user. */
+  all(): OnlineUser[] {
+    return [...this.users.values()];
+  }
+
+  /** Everyone publicly online, as others see them (invisible users are left out). */
   list(): OnlineUserSummary[] {
     return [...this.users.values()]
+      .filter((u) => userStatusModel.get(u.id) !== 'invisible')
       .sort((a, b) => a.id.localeCompare(b.id))
-      .map((u) => ({ id: u.id, presence: this.isBusy(u) ? 'busy' : 'available' }));
+      .map((u) => ({ id: u.id, presence: this.presenceOf(u) }));
+  }
+
+  /** Do not disturb wins over "in a call", which wins over idle. */
+  private presenceOf(user: OnlineUser): Presence {
+    const status = userStatusModel.get(user.id);
+    if (status === 'dnd') return 'dnd';
+    if (this.isBusy(user)) return 'busy';
+    return status === 'idle' ? 'idle' : 'available';
   }
 }
 

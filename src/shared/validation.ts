@@ -13,6 +13,19 @@ export const PIN_RULES = 'PIN must be exactly 4 digits.';
 
 export const MAX_MESSAGE_LENGTH = 500;
 
+/** Custom emoji names, used as `:name:` in messages. */
+export const EMOJI_NAME_PATTERN = /^[a-z0-9_]{2,24}$/;
+export const EMOJI_NAME_RULES = '2–24 characters: lowercase letters, digits or "_".';
+/** Matches `:name:` shortcodes in message text. */
+export const EMOJI_SHORTCODE = /:([a-z0-9_]{2,24}):/g;
+/** Largest image accepted (bytes, after the app has shrunk it). */
+export const MAX_EMOJI_BYTES = 96 * 1024;
+export const MAX_AVATAR_BYTES = 256 * 1024;
+
+export function isValidEmojiName(value: unknown): value is string {
+  return typeof value === 'string' && EMOJI_NAME_PATTERN.test(value);
+}
+
 export function isValidPin(value: unknown): value is string {
   return typeof value === 'string' && PIN_PATTERN.test(value);
 }

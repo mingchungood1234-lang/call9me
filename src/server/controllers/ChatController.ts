@@ -1,13 +1,15 @@
 import { isValidRoomId, MAX_MESSAGE_LENGTH, ROOM_ID_RULES } from '../../shared/validation';
 import { roomModel } from '../models/RoomModel';
+import { roomSettingsModel } from '../models/RoomSettingsModel';
 import { pushService } from '../services/PushService';
+import { roomDirectory } from '../services/RoomDirectory';
 import type { AppServer, AppSocket } from '../sockets/types';
 import { safeAck } from '../sockets/util';
 
 const channel = (roomId: string) => `room:${roomId}`;
 const CHAT_PUSH_THROTTLE_MS = 15_000;
 
-/** Public chat rooms: anyone who knows a room ID can join and talk. */
+/** Chat rooms: anyone allowed in (see RoomDirectory: public, or a friend of the owner) can join and talk. */
 export class ChatController {
   constructor(private readonly io: AppServer) {}
 
@@ -19,6 +21,10 @@ export class ChatController {
       if (!isValidRoomId(payload?.roomId)) return ack({ ok: false, error: `Invalid room ID. ${ROOM_ID_RULES}` });
 
       const roomId = roomModel.normalize(payload.roomId);
+      const denied = roomDirectory.denyReason(roomId, userId, payload.key);
+      if (denied) return ack({ ok: false, error: denied });
+      roomSettingsModel.claim(roomId, userId); // first to use a new ID owns it (public by default)
+
       const alreadyMember = roomModel.isMember(roomId, userId);
       roomModel.join(roomId, userId);
       roomModel.follow(roomId, userId);
@@ -30,6 +36,7 @@ export class ChatController {
         socket.to(channel(roomId)).emit('chat:message', notice);
       }
       this.emitMembers(roomId);
+      roomDirectory.changed();
     });
 
     // Leaving on purpose also stops notifications; disconnecting (app closed) doesn't.
@@ -38,6 +45,7 @@ export class ChatController {
       socket.leave(channel(roomModel.normalize(payload.roomId)));
       this.leave(payload.roomId, userId);
       roomModel.unfollow(payload.roomId, userId);
+      roomDirectory.changed();
     });
 
     socket.on('chat:message', (payload, rawAck) => {
@@ -59,6 +67,7 @@ export class ChatController {
 
   handleDisconnect(userId: string): void {
     for (const roomId of roomModel.roomsOf(userId)) this.leave(roomId, userId);
+    roomDirectory.changed();
   }
 
   private leave(roomId: string, userId: string): void {

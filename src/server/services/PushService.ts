@@ -5,6 +5,7 @@ import type { PushPayload, PushTestResult } from '../../shared/types';
 import { config } from '../config';
 import { pushSubscriptionModel } from '../models/PushSubscriptionModel';
 import { userModel } from '../models/UserModel';
+import { userStatusModel } from '../models/UserStatusModel';
 
 interface VapidKeys {
   publicKey: string;
@@ -81,6 +82,7 @@ export class PushService {
    */
   notify(userId: string, payload: PushPayload, { throttleMs = 0 }: NotifyOptions = {}): void {
     if (userModel.find(userId)?.visible) return;
+    if (userStatusModel.get(userId) === 'dnd') return; // Do not disturb: no notifications at all
     const subscriptions = pushSubscriptionModel.forUser(userId);
     if (subscriptions.length === 0) return;
 

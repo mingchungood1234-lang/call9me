@@ -8,9 +8,13 @@ const scrypt = promisify(scryptCallback) as (password: string, salt: string, key
 
 interface Account {
   id: string;
-  salt: string;
-  pinHash: string;
+  /** Unset for accounts created with Google (they have no PIN). */
+  salt?: string;
+  pinHash?: string;
   createdAt: number;
+  /** Google account ("sub") linked to this ID, and its email (for display). */
+  googleSub?: string;
+  googleEmail?: string;
 }
 
 interface FailureRecord {
@@ -45,6 +49,41 @@ export class AccountModel {
     return this.accounts.get(this.key(id))?.id;
   }
 
+  // ---- Google sign-in ----
+
+  /** The ID linked to this Google account, if any. */
+  idForGoogle(sub: string): string | undefined {
+    for (const account of this.accounts.values()) if (account.googleSub === sub) return account.id;
+    return undefined;
+  }
+
+  googleEmailOf(id: string): string | undefined {
+    return this.accounts.get(this.key(id))?.googleEmail;
+  }
+
+  /** Links a Google account to an existing ID (moving it off any other ID). */
+  linkGoogle(id: string, sub: string, email: string): void {
+    const account = this.accounts.get(this.key(id));
+    if (!account) return;
+    for (const other of this.accounts.values()) {
+      if (other.googleSub === sub && other !== account) {
+        delete other.googleSub;
+        delete other.googleEmail;
+      }
+    }
+    account.googleSub = sub;
+    account.googleEmail = email;
+    this.persist();
+  }
+
+  /** Registers a new ID that signs in with Google only. @returns false if the ID is taken. */
+  createWithGoogle(id: string, sub: string, email: string): boolean {
+    if (this.accounts.has(this.key(id))) return false;
+    this.accounts.set(this.key(id), { id, createdAt: Date.now(), googleSub: sub, googleEmail: email });
+    this.persist();
+    return true;
+  }
+
   /** Verifies the PIN of an existing ID, or registers a new ID with this PIN. */
   async login(id: string, pin: string): Promise<LoginResult> {
     const key = this.key(id);
@@ -67,6 +106,9 @@ export class AccountModel {
       return this.login(id, pin);
     }
 
+    if (!existing.salt || !existing.pinHash) {
+      return { ok: false, error: 'This ID signs in with Google. Use "Continue with Google".' };
+    }
     const hash = await scrypt(pin, existing.salt, 32);
     if (!timingSafeEqual(hash, Buffer.from(existing.pinHash, 'hex'))) {
       // A lockout that has expired starts a fresh count.

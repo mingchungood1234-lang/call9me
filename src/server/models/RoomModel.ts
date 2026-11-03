@@ -23,8 +23,17 @@ export class RoomModel {
   /** roomId → user IDs */
   private readonly followers = new Map<string, Set<string>>();
   private persistTimer: NodeJS.Timeout | null = null;
+  /** Permanent rooms' histories waiting to be written (roomId → messages). */
+  private readonly pendingHistory = new Map<string, ChatMessage[]>();
+  private historyTimer: NodeJS.Timeout | null = null;
 
-  constructor(private readonly followersFile: string) {
+  /** Permanent rooms keep their chat history on disk (set up by the room directory). */
+  isPermanent: (roomId: string) => boolean = () => false;
+
+  constructor(
+    private readonly followersFile: string,
+    private readonly historyDir: string,
+  ) {
     this.loadFollowers();
   }
 
@@ -36,7 +45,7 @@ export class RoomModel {
     const id = this.normalize(roomId);
     let room = this.rooms.get(id);
     if (!room) {
-      room = { id, members: new Set(), messages: [] };
+      room = { id, members: new Set(), messages: this.isPermanent(id) ? this.loadHistory(id) : [] };
       this.rooms.set(id, room);
     }
     room.members.add(userId);
@@ -74,8 +83,45 @@ export class RoomModel {
     if (room) {
       room.messages.push(message);
       if (room.messages.length > config.chatHistoryLimit) room.messages.shift();
+      if (this.isPermanent(id)) this.scheduleHistory(id, room.messages);
     }
     return message;
+  }
+
+  // ---- Permanent rooms' history ----
+
+  private historyFile(id: string): string {
+    return path.join(this.historyDir, `${id}.json`);
+  }
+
+  private loadHistory(id: string): ChatMessage[] {
+    try {
+      const messages: ChatMessage[] = JSON.parse(fs.readFileSync(this.historyFile(id), 'utf8'));
+      return Array.isArray(messages) ? messages.slice(-config.chatHistoryLimit) : [];
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') console.warn(`[rooms] could not read history of #${id}:`, err);
+      return [];
+    }
+  }
+
+  /** Writes are batched; the array is kept even if the room is dropped from memory meanwhile. */
+  private scheduleHistory(id: string, messages: ChatMessage[]): void {
+    this.pendingHistory.set(id, messages);
+    if (this.historyTimer) return;
+    this.historyTimer = setTimeout(() => {
+      this.historyTimer = null;
+      for (const [roomId, list] of this.pendingHistory) {
+        try {
+          fs.mkdirSync(this.historyDir, { recursive: true });
+          const tmp = `${this.historyFile(roomId)}.tmp`;
+          fs.writeFileSync(tmp, JSON.stringify(list));
+          fs.renameSync(tmp, this.historyFile(roomId));
+        } catch (err) {
+          console.warn(`[rooms] could not save history of #${roomId}:`, err);
+        }
+      }
+      this.pendingHistory.clear();
+    }, 1000);
   }
 
   // ---- Followers (notifications while offline) ----
@@ -144,4 +190,7 @@ export class RoomModel {
   }
 }
 
-export const roomModel = new RoomModel(path.join(config.dataDir, 'room-followers.json'));
+export const roomModel = new RoomModel(
+  path.join(config.dataDir, 'room-followers.json'),
+  path.join(config.dataDir, 'room-history'),
+);
