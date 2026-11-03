@@ -3,6 +3,7 @@ import { CallController } from '../controllers/CallController';
 import { ChatController } from '../controllers/ChatController';
 import { SignalingController } from '../controllers/SignalingController';
 import { sessionUserId } from '../middleware/session';
+import { callHistoryModel } from '../models/CallHistoryModel';
 import { userModel } from '../models/UserModel';
 import { listDirectory } from '../services/UserDirectory';
 import type { AppServer } from './types';
@@ -30,6 +31,11 @@ export function registerSocketHandlers(io: AppServer): void {
     signaling.register(socket);
     chat.register(socket);
     socket.on('users:list', (ack) => safeAck(ack)({ ok: true, users: listDirectory() }));
+    socket.on('history:list', (ack) => safeAck(ack)({ ok: true, entries: callHistoryModel.list(userId) }));
+    socket.on('history:clear', (ack) => {
+      callHistoryModel.clear(userId);
+      safeAck(ack)({ ok: true });
+    });
     socket.on('client:visibility', (payload) => {
       const user = userModel.find(userId);
       if (user && user.socketId === socket.id) user.visible = payload?.visible === true;

@@ -2,11 +2,12 @@ import { io } from 'socket.io-client';
 import { CONNECT_ERRORS, type OnlineUserSummary, type PushTestResult } from '../shared/types';
 import { isValidRoomId, isValidUserId, ROOM_ID_RULES } from '../shared/validation';
 import { CallManager, canShareScreen, IDLE_CALL, type CallInfo } from './lib/CallManager';
+import { CallHistoryPanel } from './lib/CallHistoryPanel';
 import { ChatPanel } from './lib/ChatPanel';
-import { $, avatar, el, hueFor, toast } from './lib/dom';
+import { $, avatar, el, formatDuration, hueFor, toast } from './lib/dom';
 import { MobileTabs } from './lib/MobileTabs';
 import { isStandalone, PushNotifications, type PushStatus } from './lib/push';
-import type { AppSocket } from './lib/socket';
+import { NOT_CONNECTED, type AppSocket } from './lib/socket';
 import { bindThemeToggle } from './lib/theme';
 import { lockZoomInStandalone } from './lib/zoom';
 
@@ -18,19 +19,22 @@ const iceServers: RTCIceServer[] = JSON.parse($('#ice-config').textContent || '[
 
 // ---- DOM ----
 const connDot = $('#conn-status');
+const connBanner = $('#conn-banner');
+const connBannerText = $('#conn-banner-text');
+const roomJoinBtn = $<HTMLButtonElement>('#room-join-btn');
 const usersList = $<HTMLUListElement>('#users-list');
 const usersCount = $('#users-count');
 const callModeSwitch = $('#call-mode');
 const callRoomForm = $<HTMLFormElement>('#call-room-form');
 const callRoomInput = $<HTMLInputElement>('#call-room-id');
-const roomAudioBtn = $<HTMLButtonElement>('#room-audio-btn');
 const roomBanner = $('#room-banner');
 const roomBannerId = $('#room-banner-id');
 const copyLinkBtn = $<HTMLButtonElement>('#copy-link-btn');
 const dialForm = $<HTMLFormElement>('#dial-form');
 const targetInput = $<HTMLInputElement>('#target-id');
-const videoCallBtn = $<HTMLButtonElement>('#video-call-btn');
-const audioCallBtn = $<HTMLButtonElement>('#audio-call-btn');
+const callBtn = $<HTMLButtonElement>('#call-btn');
+const camPrefBtns = [...document.querySelectorAll<HTMLButtonElement>('.cam-pref')];
+const callTimer = $('#call-timer');
 const stage = $('#stage');
 const remoteGrid = $('#remote-grid');
 const stagePlaceholder = $('#stage-placeholder');
@@ -46,7 +50,8 @@ const notifyBanner = $('#notify-banner');
 const incomingDialog = $<HTMLDialogElement>('#incoming-dialog');
 const incomingText = $('#incoming-text');
 const incomingSub = $('#incoming-sub');
-const acceptBtn = $<HTMLButtonElement>('#accept-btn');
+const acceptAudioBtn = $<HTMLButtonElement>('#accept-audio-btn');
+const acceptVideoBtn = $<HTMLButtonElement>('#accept-video-btn');
 const rejectBtn = $<HTMLButtonElement>('#reject-btn');
 
 const tabs = new MobileTabs('call');
@@ -58,6 +63,38 @@ function setButtonLabel(button: HTMLButtonElement, label: string, pressed?: bool
   else button.textContent = label;
   if (pressed !== undefined) button.setAttribute('aria-pressed', String(pressed));
 }
+
+// ---- Camera preference ----
+// One Call / Join button; this toggle picks whether calls start with the camera or audio only.
+// The camera can still be switched on or off at any time during the call.
+const CAMERA_PREF_KEY = 'call9me:camera';
+let cameraPref = true;
+try {
+  cameraPref = localStorage.getItem(CAMERA_PREF_KEY) !== 'off';
+} catch {
+  /* default: camera on */
+}
+function renderCameraPref(): void {
+  for (const button of camPrefBtns) {
+    button.setAttribute('aria-pressed', String(cameraPref));
+    button.title = cameraPref
+      ? 'Camera on: calls start with video. Tap for audio only.'
+      : 'Camera off: calls start audio only. Tap to turn the camera on.';
+    button.setAttribute('aria-label', cameraPref ? 'Start with camera on' : 'Start with camera off (audio only)');
+  }
+}
+for (const button of camPrefBtns) {
+  button.addEventListener('click', () => {
+    cameraPref = !cameraPref;
+    try {
+      localStorage.setItem(CAMERA_PREF_KEY, cameraPref ? 'on' : 'off');
+    } catch {
+      /* remembered for this visit only */
+    }
+    renderCameraPref();
+  });
+}
+renderCameraPref();
 
 // ---- Socket ----
 const socket: AppSocket = io({ autoConnect: false });
@@ -73,11 +110,42 @@ window.addEventListener('pagehide', () => {
   if (socket.connected) socket.emit('client:visibility', { visible: false });
 });
 
+// ---- Connection status ----
+// A banner (not just the dot) says when we're offline; the first connect gets a moment before it shows.
+let bannerTimer: ReturnType<typeof setTimeout> | undefined;
+function renderConnection(): void {
+  const online = socket.connected;
+  connDot.dataset.state = online ? 'online' : 'offline';
+  connDot.title = online ? 'Connected' : hasConnected ? 'Disconnected — reconnecting…' : 'Connecting…';
+  connBannerText.textContent = !navigator.onLine
+    ? 'You are offline. Waiting for the network…'
+    : hasConnected
+      ? 'Connection lost. Reconnecting…'
+      : 'Connecting to the server…';
+  clearTimeout(bannerTimer);
+  if (online) connBanner.hidden = true;
+  else if (hasConnected) connBanner.hidden = false;
+  else bannerTimer = setTimeout(() => (connBanner.hidden = socket.connected), 2000);
+  renderCallState(callsInfo);
+}
+
+/** Skips socket.io's reconnect back-off, e.g. when the network or the app comes back. */
+function reconnectNow(): void {
+  if (socket.connected) return;
+  socket.disconnect();
+  socket.connect();
+}
+$('#conn-retry-btn').addEventListener('click', reconnectNow);
+window.addEventListener('online', reconnectNow);
+window.addEventListener('offline', renderConnection);
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && hasConnected) reconnectNow();
+});
+
 socket.on('connect', () => {
   takenRetries = 0;
   reportVisibility();
-  connDot.dataset.state = 'online';
-  connDot.title = 'Connected';
+  callHistory.load();
   if (hasConnected) {
     toast('Reconnected', 'success');
     chat.rejoin();
@@ -96,13 +164,18 @@ socket.on('connect', () => {
     }
   }
   hasConnected = true;
+  renderConnection();
 });
 
-socket.on('disconnect', () => {
-  connDot.dataset.state = 'offline';
-  connDot.title = 'Disconnected — reconnecting…';
+socket.on('disconnect', (reason) => {
+  // Requests queued while offline belong to a session the server has already dropped
+  // (it ends our calls); replaying them after reconnecting would do stale things.
+  socket.sendBuffer = [];
   if (calls.state !== 'idle') toast('Lost connection to server — call ended.', 'error');
   calls.reset();
+  // The server closed this connection itself, so socket.io won't retry on its own.
+  if (reason === 'io server disconnect') socket.connect();
+  renderConnection();
 });
 
 socket.on('connect_error', (err) => {
@@ -143,14 +216,14 @@ function renderUsers(): void {
       const callBtn = el('button', {
         className: 'btn btn-small btn-primary user-call-btn',
         text: inCall ? 'Add' : 'Call',
-        title: inCall ? `Add ${u.id} to the call` : `Video call ${u.id}`,
+        title: inCall ? `Add ${u.id} to the call` : `Call ${u.id}`,
       });
       callBtn.type = 'button';
-      callBtn.disabled = u.presence === 'busy' || calls.state === 'incoming';
+      callBtn.disabled = u.presence === 'busy' || calls.state === 'incoming' || !socket.connected;
       callBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         targetInput.value = u.id;
-        startCall(callsInfo.state === 'in-call' ? callsInfo.video : true);
+        startCall();
       });
 
       const item = el('li', { className: `user-item ${u.presence}` }, [
@@ -184,6 +257,8 @@ interface Tile {
 }
 const tiles = new Map<string, Tile>();
 const sharingPeers = new Set<string>();
+/** Peers who switched their camera off (their video track may not report "muted" right away). */
+const cameraOffPeers = new Set<string>();
 
 function ensureTile(peerId: string): Tile {
   let tile = tiles.get(peerId);
@@ -268,24 +343,30 @@ keepPlaying(localVideo);
 // Opened from a notification, the browser may block call audio until the first tap.
 document.addEventListener('pointerdown', resumeAllVideos);
 
-/** Shows the avatar instead of a black box while a peer sends no video. */
-function watchVideoTracks(tile: Tile, stream: MediaStream): void {
-  const update = () =>
-    tile.root.classList.toggle(
-      'has-video',
-      stream.getVideoTracks().some((t) => t.readyState === 'live' && !t.muted),
-    );
+/** Shows the avatar instead of a black box while a peer sends no video or has their camera off. */
+function refreshTileVideo(peerId: string): void {
+  const tile = tiles.get(peerId);
+  const stream = tile?.video.srcObject as MediaStream | null | undefined;
+  if (!tile || !stream) return;
+  const receiving = stream.getVideoTracks().some((t) => t.readyState === 'live' && !t.muted);
+  tile.root.classList.toggle('has-video', receiving && (sharingPeers.has(peerId) || !cameraOffPeers.has(peerId)));
+}
+
+function watchVideoTracks(peerId: string, stream: MediaStream): void {
   for (const track of stream.getVideoTracks()) {
-    track.onmute = track.onunmute = track.onended = update;
+    track.onmute = track.onunmute = track.onended = () => refreshTileVideo(peerId);
   }
-  update();
+  refreshTileVideo(peerId);
 }
 
 function layoutStage(): void {
   remoteGrid.dataset.count = String(tiles.size);
   const someoneSharing = sharingPeers.size > 0;
   stage.classList.toggle('has-screen', someoneSharing);
-  for (const [peerId, tile] of tiles) tile.root.classList.toggle('is-sharing', sharingPeers.has(peerId));
+  for (const [peerId, tile] of tiles) {
+    tile.root.classList.toggle('is-sharing', sharingPeers.has(peerId));
+    refreshTileVideo(peerId);
+  }
   stagePlaceholder.hidden = tiles.size > 0;
 }
 
@@ -305,7 +386,7 @@ const calls = new CallManager(socket, userId, iceServers, {
     const tile = ensureTile(peerId);
     if (tile.video.srcObject !== stream) tile.video.srcObject = stream;
     tile.video.play().catch(() => {});
-    watchVideoTracks(tile, stream);
+    watchVideoTracks(peerId, stream);
   },
   onPeerConnectionState: (peerId, state) => {
     const tile = tiles.get(peerId);
@@ -326,15 +407,23 @@ const calls = new CallManager(socket, userId, iceServers, {
     layoutStage();
     if (sharing && tabs.isPhone) tabs.show('call');
   },
+  onPeerCamera: (peerId, on) => {
+    if (on) cameraOffPeers.delete(peerId);
+    else cameraOffPeers.add(peerId);
+    refreshTileVideo(peerId);
+  },
   onLocalScreen: (sharing) => {
     setButtonLabel(shareBtn, sharing ? 'Stop sharing' : 'Share screen', sharing);
     shareBtn.classList.toggle('active', sharing);
-    camBtn.disabled = sharing || !calls.hasLocalTrack('video');
+    camBtn.disabled = sharing;
   },
   onIncoming: (from, video, participants, roomId) => {
     incomingText.textContent = roomId
       ? `${from} invited you to room #${roomId}`
       : `${from} is ${video ? 'video' : 'voice'} calling you`;
+    // Answer however you like; the caller's choice is just the highlighted default.
+    acceptVideoBtn.className = `btn ${video ? 'btn-success' : 'btn-secondary'}`;
+    acceptAudioBtn.className = `btn ${video ? 'btn-secondary' : 'btn-success'}`;
     const others = participants.filter((p) => p !== from);
     incomingSub.textContent = others.length ? `With ${others.join(', ')}` : '';
     tabs.show('call');
@@ -348,7 +437,7 @@ const calls = new CallManager(socket, userId, iceServers, {
 function renderCallState(info: CallInfo): void {
   const wasIdle = callsInfo.state === 'idle';
   callsInfo = info;
-  const { state, roomId, participants, invited, video, incomingFrom } = info;
+  const { state, roomId, participants, invited, incomingFrom } = info;
 
   stage.dataset.state = state;
   document.body.classList.toggle('in-call', state === 'in-call');
@@ -359,9 +448,11 @@ function renderCallState(info: CallInfo): void {
   callModeSwitch.hidden = !idle;
   callRoomForm.hidden = !idle || callMode !== 'room';
   dialForm.hidden = idle && callMode !== 'user';
-  videoCallBtn.textContent = inCall ? 'Add to call' : 'Video call';
-  audioCallBtn.hidden = inCall;
-  videoCallBtn.disabled = audioCallBtn.disabled = targetInput.disabled = state === 'incoming';
+  callBtn.textContent = inCall ? 'Add to call' : 'Call';
+  for (const button of camPrefBtns) button.hidden = inCall;
+  targetInput.disabled = state === 'incoming';
+  callBtn.disabled = state === 'incoming' || !socket.connected;
+  roomJoinBtn.disabled = !socket.connected;
   targetInput.placeholder = inCall ? 'User ID to add' : 'User ID to call';
 
   roomBanner.hidden = !(inCall && roomId);
@@ -371,12 +462,12 @@ function renderCallState(info: CallInfo): void {
   shareBtn.hidden = !canShareScreen();
 
   let status: string;
-  if (idle) status = 'Ready';
+  if (idle) status = socket.connected ? 'Ready' : hasConnected ? 'Offline' : 'Connecting…';
   else if (state === 'incoming') status = `Incoming call from ${incomingFrom}`;
   else if (roomId && participants.length === 0) status = `Waiting in #${roomId} — share the invite link`;
   else if (participants.length === 0) status = invited.length ? `Calling ${invited.join(', ')}…` : 'Starting call…';
   else {
-    status = `${roomId ? `#${roomId}` : video ? 'Video call' : 'Voice call'} · ${participants.length + 1} people`;
+    status = `${roomId ? `#${roomId}` : 'In call'} · ${participants.length + 1} people`;
     if (invited.length) status += ` · ringing ${invited.join(', ')}`;
   }
   callStatus.textContent = status;
@@ -393,21 +484,46 @@ function renderCallState(info: CallInfo): void {
     micBtn.classList.remove('active');
     camBtn.classList.remove('active');
     sharingPeers.clear();
+    cameraOffPeers.clear();
     for (const peerId of [...tiles.keys()]) removeTile(peerId);
   }
   micBtn.disabled = !calls?.hasLocalTrack('audio');
-  camBtn.disabled = !calls?.hasLocalTrack('video') || !!calls?.isSharingScreen;
+  camBtn.disabled = !inCall || !!calls?.isSharingScreen;
+  if (inCall && calls) renderCameraButton(calls.isCameraOn);
+  renderTimer(info);
 
   if (wasIdle && state !== 'idle') tabs.show('call');
   updateCallBadge();
   renderUsers();
 }
 
+// ---- Call timer ----
+// Counts from when someone else first joins until we leave the call.
+let connectedSince: number | null = null;
+let timerInterval: ReturnType<typeof setInterval> | undefined;
+
+function tickTimer(): void {
+  if (connectedSince !== null) callTimer.textContent = formatDuration(Date.now() - connectedSince);
+}
+
+function renderTimer(info: CallInfo): void {
+  if (info.state === 'in-call' && info.participants.length > 0 && connectedSince === null) {
+    connectedSince = Date.now();
+    timerInterval = setInterval(tickTimer, 1000);
+  } else if (info.state !== 'in-call' && connectedSince !== null) {
+    connectedSince = null;
+    clearInterval(timerInterval);
+  }
+  callTimer.hidden = connectedSince === null;
+  tickTimer();
+}
+
 function updateCallBadge(): void {
   tabs.setBadge('call', callsInfo.state === 'in-call' && !tabs.isVisible('call') ? '●' : null);
 }
 
-function startCall(video: boolean): void {
+/** Calls the ID in the dial box (camera per the toggle), or adds them to the current call. */
+function startCall(): void {
   const to = targetInput.value.trim();
   if (!isValidUserId(to)) {
     toast('Enter a valid user ID to call.', 'error');
@@ -418,17 +534,19 @@ function startCall(video: boolean): void {
     toast('You cannot call yourself.', 'error');
     return;
   }
+  if (!socket.connected) {
+    toast(NOT_CONNECTED, 'error'); // keep the typed ID for when the connection is back
+    return;
+  }
   targetInput.value = '';
   if (tabs.isPhone) tabs.show('call');
-  void calls.startCall(to, video);
+  void calls.startCall(to, cameraPref);
 }
 
 dialForm.addEventListener('submit', (e) => {
   e.preventDefault();
-  startCall(callsInfo.state === 'in-call' ? callsInfo.video : true);
+  startCall();
 });
-videoCallBtn.addEventListener('click', () => startCall(callsInfo.state === 'in-call' ? callsInfo.video : true));
-audioCallBtn.addEventListener('click', () => startCall(false));
 // ---- Call rooms (join by room ID) ----
 function setCallMode(mode: CallMode): void {
   callMode = mode;
@@ -444,7 +562,7 @@ callModeSwitch.addEventListener('click', (e) => {
   if (button) setCallMode(button.dataset.mode as CallMode);
 });
 
-function joinCallRoom(video: boolean): void {
+function joinCallRoom(): void {
   const roomId = callRoomInput.value.trim();
   if (!isValidRoomId(roomId)) {
     toast(`Enter a valid room ID (${ROOM_ID_RULES})`, 'error');
@@ -452,13 +570,12 @@ function joinCallRoom(video: boolean): void {
     return;
   }
   if (tabs.isPhone) tabs.show('call');
-  void calls.joinRoom(roomId, video);
+  void calls.joinRoom(roomId, cameraPref);
 }
 callRoomForm.addEventListener('submit', (e) => {
   e.preventDefault();
-  joinCallRoom(true);
+  joinCallRoom();
 });
-roomAudioBtn.addEventListener('click', () => joinCallRoom(false));
 
 copyLinkBtn.addEventListener('click', async () => {
   if (!callsInfo.roomId) return;
@@ -527,19 +644,30 @@ micBtn.addEventListener('click', () => {
   setButtonLabel(micBtn, on ? 'Mute' : 'Unmute', !on);
   micBtn.classList.toggle('active', !on);
 });
-camBtn.addEventListener('click', () => {
-  const on = calls.toggleCamera();
+function renderCameraButton(on: boolean): void {
   setButtonLabel(camBtn, on ? 'Camera' : 'Camera off', !on);
   camBtn.classList.toggle('active', !on);
-  localVideo.classList.toggle('video-off', !on);
+  camBtn.title = on ? 'Turn camera off' : 'Turn camera on';
+}
+camBtn.addEventListener('click', async () => {
+  camBtn.disabled = true; // asking for the camera can take a moment (permission prompt)
+  try {
+    renderCameraButton(await calls.toggleCamera());
+  } finally {
+    camBtn.disabled = callsInfo.state !== 'in-call' || calls.isSharingScreen;
+  }
 });
 shareBtn.addEventListener('click', () => {
   if (calls.isSharingScreen) void calls.stopScreenShare();
   else void calls.startScreenShare();
 });
-acceptBtn.addEventListener('click', () => {
+acceptVideoBtn.addEventListener('click', () => {
   incomingDialog.close();
-  void calls.acceptIncoming();
+  void calls.acceptIncoming(true);
+});
+acceptAudioBtn.addEventListener('click', () => {
+  incomingDialog.close();
+  void calls.acceptIncoming(false);
 });
 rejectBtn.addEventListener('click', () => {
   incomingDialog.close();
@@ -547,6 +675,27 @@ rejectBtn.addEventListener('click', () => {
 });
 // Escape key closes the dialog — treat it as a rejection.
 incomingDialog.addEventListener('cancel', () => calls.rejectIncoming());
+
+// ---- Call history ----
+const callHistory = new CallHistoryPanel(socket, (entry) => {
+  if (callsInfo.state === 'incoming') {
+    toast('Answer or decline the incoming call first.', 'error');
+    return;
+  }
+  if (entry.roomId) {
+    if (callsInfo.state !== 'idle') {
+      toast('Leave the current call first.', 'error');
+      return;
+    }
+    callRoomInput.value = entry.roomId;
+    setCallMode('room');
+    joinCallRoom();
+  } else {
+    setCallMode('user');
+    targetInput.value = entry.peers[0];
+    startCall();
+  }
+});
 
 // ---- Chat ----
 let unread = 0;

@@ -4,6 +4,7 @@ import { config } from '../config';
 import { accountModel } from '../models/AccountModel';
 import { callModel, type Call } from '../models/CallModel';
 import { userModel, type OnlineUser } from '../models/UserModel';
+import { callHistory } from '../services/CallHistory';
 import { pushService } from '../services/PushService';
 import { listDirectory } from '../services/UserDirectory';
 import type { AppServer, AppSocket } from '../sockets/types';
@@ -53,14 +54,21 @@ export class SignalingController {
   /** "callId|userId" → ring timeout */
   private readonly inviteTimers = new Map<string, NodeJS.Timeout>();
 
-  constructor(private readonly io: AppServer) {}
+  constructor(private readonly io: AppServer) {
+    callHistory.onEntry = (userId, entry) => {
+      const user = userModel.find(userId);
+      if (user) this.io.to(user.socketId).emit('history:new', entry);
+    };
+  }
 
   register(socket: AppSocket): void {
     const me = () => userModel.find(socket.data.userId);
 
     socket.on('call:invite', (payload, ack) => this.invite(me(), payload, safeAck(ack)));
     socket.on('call:join-room', (payload, ack) => this.joinRoom(me(), payload, safeAck(ack)));
-    socket.on('call:accept', (payload, ack) => this.accept(me(), payload?.callId, safeAck(ack)));
+    socket.on('call:accept', (payload, ack) =>
+      this.accept(me(), payload?.callId, payload?.video !== false, safeAck(ack)),
+    );
     socket.on('call:reject', (payload) => {
       const user = me();
       const reason = typeof payload?.reason === 'string' ? payload.reason.slice(0, 100) : 'declined';
@@ -73,6 +81,13 @@ export class SignalingController {
       if (!user || !call) return;
       const sharing = payload?.sharing === true;
       this.eachParticipant(call, (p) => this.io.to(p.socketId).emit('call:screen', { from: user.id, sharing }), user.id);
+    });
+    socket.on('call:camera', (payload) => {
+      const user = me();
+      const call = user && callModel.get(user.callId);
+      if (!user || !call) return;
+      const on = payload?.on === true;
+      this.eachParticipant(call, (p) => this.io.to(p.socketId).emit('call:camera', { from: user.id, on }), user.id);
     });
 
     socket.on('webrtc:offer', (payload) => {
@@ -136,6 +151,8 @@ export class SignalingController {
     const call = callModel.get(callId);
     if (!call?.invited.delete(userId)) return false;
     this.clearInviteTimer(callId, userId);
+    if (reason === 'declined') callHistory.declined(call, userId);
+    callHistory.finish(callId, userId, reason === 'declined' ? 'declined' : 'missed');
 
     this.eachParticipant(call, (p) => this.io.to(p.socketId).emit('call:rejected', { callId, from: userId, reason }));
     if (!this.endIfEmpty(call)) this.emitUpdate(call);
@@ -181,6 +198,7 @@ export class SignalingController {
       caller.callId = call.id;
     }
     call.invited.set(calleeId, { by: caller.id, at: Date.now() });
+    callHistory.dial(call, caller.id, calleeId, payload.video !== false);
 
     const callId = call.id;
     this.inviteTimers.set(
@@ -227,6 +245,7 @@ export class SignalingController {
     if (call) call.participants.add(user.id);
     else call = callModel.create(user.id, video, payload.roomId);
     user.callId = call.id;
+    callHistory.join(call, user.id, video);
 
     const callId = call.id;
     this.eachParticipant(call, (p) => this.io.to(p.socketId).emit('call:peer-joined', { callId, userId: user.id }), user.id);
@@ -239,6 +258,7 @@ export class SignalingController {
   private accept(
     user: OnlineUser | undefined,
     callId: unknown,
+    video: boolean,
     ack: Ack<{ callId: string; participants: string[]; video: boolean }>,
   ): void {
     if (!user || typeof callId !== 'string' || user.invitedTo !== callId) {
@@ -256,6 +276,7 @@ export class SignalingController {
     const existing = [...call.participants];
     call.participants.add(user.id);
     user.callId = call.id;
+    callHistory.join(call, user.id, video);
 
     this.eachParticipant(call, (p) => this.io.to(p.socketId).emit('call:peer-joined', { callId, userId: user.id }), user.id);
     // The newcomer sends an offer to each existing participant.
@@ -271,6 +292,7 @@ export class SignalingController {
     if (!call || !invite) return;
 
     call.invited.delete(userId);
+    callHistory.finish(callId, userId, 'missed');
     const user = userModel.find(userId);
     if (user && user.invitedTo === callId) {
       user.invitedTo = null;
@@ -289,6 +311,7 @@ export class SignalingController {
     user.callId = null;
     if (call) {
       call.participants.delete(user.id);
+      callHistory.finish(call.id, user.id, 'cancelled');
       this.eachParticipant(call, (p) =>
         this.io.to(p.socketId).emit('call:peer-left', { callId: call.id, userId: user.id, reason }),
       );
@@ -307,12 +330,14 @@ export class SignalingController {
     const alone = call.roomId === null && call.participants.size === 1 && call.invited.size === 0;
     if (call.participants.size > 0 && !alone) return false;
 
+    for (const id of call.participants) callHistory.finish(call.id, id, 'unanswered');
     this.eachParticipant(call, (p) => {
       p.callId = null;
       this.io.to(p.socketId).emit('call:ended', { callId: call.id, reason: 'everyone else left' });
     });
     for (const [userId, invite] of call.invited) {
       this.clearInviteTimer(call.id, userId);
+      callHistory.finish(call.id, userId, 'missed');
       const user = userModel.find(userId);
       if (user && user.invitedTo === call.id) {
         user.invitedTo = null;

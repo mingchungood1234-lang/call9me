@@ -47,7 +47,29 @@ export interface CallUpdate {
   video: boolean;
 }
 
-export type Ack<T = {}> = (result: ({ ok: true } & T) | { ok: false; error: string }) => void;
+/**
+ * One call as one user saw it. "completed": someone else was connected (see `durationMs`);
+ * "missed" / "declined": an incoming call we didn't take; "unanswered": we called or opened
+ * a room and nobody joined; "cancelled": we hung up before anyone answered.
+ */
+export type CallOutcome = 'completed' | 'missed' | 'declined' | 'unanswered' | 'cancelled';
+
+export interface CallHistoryEntry {
+  id: string;
+  callId: string;
+  direction: 'outgoing' | 'incoming' | 'room';
+  roomId: string | null;
+  /** Everyone else who was invited to, or was in, the call with us. */
+  peers: string[];
+  video: boolean;
+  outcome: CallOutcome;
+  startedAt: number;
+  endedAt: number;
+  /** Time spent with at least one other person connected. */
+  durationMs: number;
+}
+
+export type Ack<T = {}> =(result: ({ ok: true } & T) | { ok: false; error: string }) => void;
 
 export interface ClientToServerEvents {
   'users:list': (ack: Ack<{ users: OnlineUserSummary[] }>) => void;
@@ -68,15 +90,20 @@ export interface ClientToServerEvents {
     payload: { roomId: string; video: boolean },
     ack: Ack<{ callId: string; roomId: string; participants: string[]; video: boolean }>,
   ) => void;
-  /** Joins the call; the ack lists the participants we must send offers to. */
+  /**
+   * Joins the call (`video`: whether we answer with our camera on); the ack lists the
+   * participants we must send offers to.
+   */
   'call:accept': (
-    payload: { callId: string },
+    payload: { callId: string; video?: boolean },
     ack: Ack<{ callId: string; participants: string[]; video: boolean }>,
   ) => void;
   'call:reject': (payload: { callId: string; reason?: string }) => void;
   'call:leave': () => void;
   /** Tells the other participants whether our outgoing video is currently a screen share. */
   'call:screen': (payload: { sharing: boolean }) => void;
+  /** Tells the other participants whether our camera is on (so they can show our avatar instead). */
+  'call:camera': (payload: { on: boolean }) => void;
 
   /** Mesh signaling: each message targets one participant of our call. */
   'webrtc:offer': (payload: { to: string; sdp: SessionDescription }) => void;
@@ -89,6 +116,10 @@ export interface ClientToServerEvents {
   ) => void;
   'chat:leave': (payload: { roomId: string }) => void;
   'chat:message': (payload: { roomId: string; text: string }, ack: Ack) => void;
+
+  /** Our call history, newest first. */
+  'history:list': (ack: Ack<{ entries: CallHistoryEntry[] }>) => void;
+  'history:clear': (ack: Ack) => void;
 }
 
 export interface ServerToClientEvents {
@@ -111,6 +142,7 @@ export interface ServerToClientEvents {
   /** The call is over for us (nobody else left). */
   'call:ended': (payload: { callId: string; reason: string }) => void;
   'call:screen': (payload: { from: string; sharing: boolean }) => void;
+  'call:camera': (payload: { from: string; on: boolean }) => void;
 
   'webrtc:offer': (payload: { from: string; sdp: SessionDescription }) => void;
   'webrtc:answer': (payload: { from: string; sdp: SessionDescription }) => void;
@@ -118,6 +150,9 @@ export interface ServerToClientEvents {
 
   'chat:message': (message: ChatMessage) => void;
   'chat:members': (payload: { roomId: string; members: string[] }) => void;
+
+  /** A call of ours just ended (or was missed) and was added to the history. */
+  'history:new': (entry: CallHistoryEntry) => void;
 }
 
 export interface SocketData {

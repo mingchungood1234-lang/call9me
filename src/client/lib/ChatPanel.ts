@@ -1,7 +1,7 @@
 import type { ChatMessage } from '../../shared/types';
 import { isValidRoomId, MAX_MESSAGE_LENGTH, ROOM_ID_RULES } from '../../shared/validation';
 import { $, el, formatTime, toast } from './dom';
-import type { AppSocket } from './socket';
+import { NOT_CONNECTED, withTimeout, type AppSocket } from './socket';
 
 const LAST_ROOM_KEY = 'call9me:lastRoom';
 
@@ -84,11 +84,16 @@ export class ChatPanel {
     }
     const previous = this.currentRoom;
     if (previous === roomId.toLowerCase() && !silent) return;
+    if (!this.socket.connected) {
+      // The current room is rejoined automatically once the connection is back (see `rejoin`).
+      if (!silent) toast(NOT_CONNECTED, 'error');
+      return;
+    }
     if (previous && previous !== roomId.toLowerCase()) this.socket.emit('chat:leave', { roomId: previous });
 
-    this.socket.emit('chat:join', { roomId }, (res) => {
+    this.socket.emit('chat:join', { roomId }, withTimeout((res) => {
       if (!res.ok) {
-        toast(res.error, 'error');
+        if (!silent) toast(res.error, 'error');
         return;
       }
       this.currentRoom = res.roomId;
@@ -99,7 +104,7 @@ export class ChatPanel {
       this.renderMembers(res.members);
       this.render();
       if (!silent) this.messageInput.focus();
-    });
+    }));
   }
 
   leave(): void {
@@ -115,9 +120,16 @@ export class ChatPanel {
   private send(): void {
     const text = this.messageInput.value.trim();
     if (!text || !this.currentRoom) return;
-    this.socket.emit('chat:message', { roomId: this.currentRoom, text }, (res) => {
-      if (!res.ok) toast(res.error, 'error');
-    });
+    if (!this.socket.connected) {
+      toast(NOT_CONNECTED, 'error');
+      return;
+    }
+    this.socket.emit('chat:message', { roomId: this.currentRoom, text }, withTimeout((res) => {
+      if (res.ok) return;
+      toast(res.error, 'error');
+      // Give the unsent text back so it isn't lost (unless they've started typing again).
+      if (!this.messageInput.value) this.messageInput.value = text;
+    }));
     this.messageInput.value = '';
   }
 

@@ -36,6 +36,12 @@
     </div>
   </div>
 
+  <div id="conn-banner" class="conn-banner" role="status" aria-live="polite" hidden>
+    <span class="conn-spinner" aria-hidden="true"></span>
+    <span id="conn-banner-text">Connecting to the server…</span>
+    <button id="conn-retry-btn" class="btn btn-ghost btn-small" type="button">Retry now</button>
+  </div>
+
   <main class="layout">
     <!-- Online users -->
     <aside class="panel users-panel" data-panel="users">
@@ -45,6 +51,15 @@
       </h2>
       <p class="panel-hint">Tap a name to select, or press Call.</p>
       <ul id="users-list" class="users-list"></ul>
+
+      <div class="history-head">
+        <h2>
+          <span class="panel-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 3a9 9 0 0 0-9 9H1l3.9 3.9L9 12H6a7 7 0 1 1 2.05 4.95l-1.42 1.42A9 9 0 1 0 13 3Zm-1 5v5l4.25 2.52.77-1.28-3.52-2.09V8H12Z"/></svg></span>
+          Recent calls
+        </h2>
+        <button id="history-clear-btn" class="btn btn-ghost btn-small" type="button" hidden>Clear</button>
+      </div>
+      <ul id="history-list" class="history-list"></ul>
     </aside>
 
     <!-- Calling -->
@@ -63,8 +78,11 @@
       <form id="call-room-form" class="dial-form" hidden>
         <input id="call-room-id" type="text" maxlength="32" autocomplete="off" autocapitalize="off" spellcheck="false"
                placeholder="Room ID, e.g. team-standup" aria-label="Call room ID">
-        <button id="room-video-btn" class="btn btn-primary" type="submit">Join</button>
-        <button id="room-audio-btn" class="btn btn-secondary" type="button">Audio only</button>
+        <button class="btn btn-secondary cam-pref" type="button" aria-pressed="true">
+          <svg class="cam-on" viewBox="0 0 24 24" aria-hidden="true"><path d="M17 10.5V7a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-3.5l4 4v-11l-4 4Z"/></svg>
+          <svg class="cam-off" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 6.5 17 10.5V7a1 1 0 0 0-1-1H9.82L21 17.18V6.5ZM3.27 2 2 3.27 4.73 6H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12c.21 0 .39-.08.54-.18L19.73 21 21 19.73 3.27 2Z"/></svg>
+        </button>
+        <button id="room-join-btn" class="btn btn-primary" type="submit">Join</button>
       </form>
       <div id="room-banner" class="room-banner" hidden>
         <span class="room-banner-label">
@@ -76,13 +94,17 @@
       <form id="dial-form" class="dial-form">
         <input id="target-id" type="text" maxlength="20" autocomplete="off" autocapitalize="off" spellcheck="false"
                placeholder="User ID to call" aria-label="User ID to call">
-        <button id="video-call-btn" class="btn btn-primary" type="button">Video call</button>
-        <button id="audio-call-btn" class="btn btn-secondary" type="button">Voice call</button>
+        <button class="btn btn-secondary cam-pref" type="button" aria-pressed="true">
+          <svg class="cam-on" viewBox="0 0 24 24" aria-hidden="true"><path d="M17 10.5V7a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-3.5l4 4v-11l-4 4Z"/></svg>
+          <svg class="cam-off" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 6.5 17 10.5V7a1 1 0 0 0-1-1H9.82L21 17.18V6.5ZM3.27 2 2 3.27 4.73 6H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12c.21 0 .39-.08.54-.18L19.73 21 21 19.73 3.27 2Z"/></svg>
+        </button>
+        <button id="call-btn" class="btn btn-primary" type="submit">Call</button>
       </form>
 
       <div id="stage" class="stage" data-state="idle">
         <div id="remote-grid" class="remote-grid" data-count="0"></div>
         <div id="stage-placeholder" class="stage-placeholder"></div>
+        <span id="call-timer" class="call-timer" role="timer" aria-label="Call duration" hidden>00:00</span>
         <video id="local-video" class="local-video" autoplay playsinline muted hidden></video>
       </div>
 
@@ -155,7 +177,8 @@
     <p id="incoming-sub" class="incoming-sub"></p>
     <div class="dialog-actions">
       <button id="reject-btn" class="btn btn-danger" type="button">Decline</button>
-      <button id="accept-btn" class="btn btn-success" type="button">Accept</button>
+      <button id="accept-audio-btn" class="btn btn-secondary" type="button">Audio</button>
+      <button id="accept-video-btn" class="btn btn-success" type="button">Video</button>
     </div>
   </dialog>
 

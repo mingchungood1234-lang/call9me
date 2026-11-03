@@ -1,5 +1,5 @@
 import type { IceCandidate } from '../../shared/types';
-import type { AppSocket } from './socket';
+import { NOT_CONNECTED, withTimeout, type AppSocket } from './socket';
 
 export type CallState = 'idle' | 'incoming' | 'in-call';
 
@@ -25,6 +25,8 @@ export interface CallEvents {
   onPeerConnectionState(peerId: string, state: RTCPeerConnectionState): void;
   onPeerRemoved(peerId: string): void;
   onPeerScreen(peerId: string, sharing: boolean): void;
+  /** A peer switched their camera on or off. */
+  onPeerCamera(peerId: string, on: boolean): void;
   onLocalScreen(sharing: boolean): void;
   onIncoming(from: string, video: boolean, participants: string[], roomId: string | null): void;
   onNotice(message: string, kind?: 'info' | 'success' | 'error'): void;
@@ -35,7 +37,17 @@ interface Peer {
   pc: RTCPeerConnection;
   pendingIce: RTCIceCandidateInit[];
   stream: MediaStream;
+  /** Only the offerer restarts ICE, so both sides never send offers at once. */
+  isOfferer: boolean;
+  restarts: number;
+  /** Pending ICE restart after a "disconnected" spell that didn't heal by itself. */
+  restartTimer?: ReturnType<typeof setTimeout>;
 }
+
+/** ICE restarts tried per peer before the connection is reported as failed. */
+const MAX_ICE_RESTARTS = 3;
+/** How long a "disconnected" connection may recover on its own before an ICE restart. */
+const DISCONNECT_GRACE_MS = 4000;
 
 export const IDLE_CALL: CallInfo = {
   state: 'idle',
@@ -71,6 +83,8 @@ export class CallManager {
   private screenTrack: MediaStreamTrack | null = null;
   /** Incremented on every cleanup so stale async continuations can bail out. */
   private session = 0;
+  /** Set while accepting, so a second tap (or auto-answer) can't accept twice. */
+  private accepting = false;
 
   constructor(
     private readonly socket: AppSocket,
@@ -95,12 +109,16 @@ export class CallManager {
       this.events.onNotice('Answer or decline the incoming call first.', 'error');
       return;
     }
+    if (!this.socket.connected) {
+      this.events.onNotice(NOT_CONNECTED, 'error');
+      return;
+    }
     if (this.info.state === 'in-call') {
-      this.socket.emit('call:invite', { to, video: this.info.video }, (res) => {
+      this.socket.emit('call:invite', { to, video: this.info.video }, withTimeout((res) => {
         if (!res.ok) this.events.onNotice(res.error, 'error');
         else if (res.offline) this.events.onNotice(`${res.to} is offline — ringing their device with a notification…`);
         else this.events.onNotice(`Ringing ${res.to}…`);
-      });
+      }));
       return;
     }
 
@@ -115,25 +133,20 @@ export class CallManager {
     }
     this.setLocalStream(stream);
 
-    this.socket.emit('call:invite', { to, video }, (res) => {
-      if (session !== this.session) {
-        if (res.ok) this.socket.emit('call:leave');
-        return;
-      }
-      if (!res.ok) {
-        this.events.onNotice(res.error, 'error');
-        this.cleanup();
-        return;
-      }
+    this.socket.emit('call:invite', { to, video }, this.callAck(session, (res) => {
       this.setInfo({ ...this.info, callId: res.callId });
       if (res.offline) this.events.onNotice(`${res.to} is offline — ringing their device with a notification…`);
-    });
+    }));
   }
 
   /** Joins the call room with this ID (everyone using the same ID meets there). */
   async joinRoom(roomId: string, video: boolean): Promise<void> {
     if (this.info.state !== 'idle') {
       this.events.onNotice('Leave the current call first.', 'error');
+      return;
+    }
+    if (!this.socket.connected) {
+      this.events.onNotice(NOT_CONNECTED, 'error');
       return;
     }
     const session = this.session;
@@ -146,47 +159,40 @@ export class CallManager {
     }
     this.setLocalStream(stream);
 
-    this.socket.emit('call:join-room', { roomId, video }, (res) => {
-      if (session !== this.session) {
-        if (res.ok) this.socket.emit('call:leave');
-        return;
-      }
-      if (!res.ok) {
-        this.events.onNotice(res.error, 'error');
-        this.cleanup();
-        return;
-      }
+    this.socket.emit('call:join-room', { roomId, video }, this.callAck(session, (res) => {
       this.setInfo({ ...this.info, callId: res.callId, roomId: res.roomId, participants: res.participants });
       for (const peerId of res.participants) void this.connectTo(peerId);
-    });
+    }));
   }
 
-  async acceptIncoming(): Promise<void> {
-    const { state, callId, video } = this.info;
-    if (state !== 'incoming' || !callId) return;
+  /** Answers with the camera on (`video`) or audio only, whatever kind of call the caller started. */
+  async acceptIncoming(video = this.info.video): Promise<void> {
+    const { state, callId } = this.info;
+    if (state !== 'incoming' || !callId || this.accepting) return;
+    if (!this.socket.connected) {
+      this.events.onNotice(NOT_CONNECTED, 'error');
+      return;
+    }
     const session = this.session;
 
-    const stream = await this.acquireMedia(video);
+    this.accepting = true;
+    let stream: MediaStream | null;
+    try {
+      stream = await this.acquireMedia(video);
+    } finally {
+      this.accepting = false;
+    }
     if (session !== this.session) {
       stream?.getTracks().forEach((t) => t.stop());
       return;
     }
     this.setLocalStream(stream);
-    this.setInfo({ ...this.info, state: 'in-call', incomingFrom: null });
+    this.setInfo({ ...this.info, state: 'in-call', video, incomingFrom: null });
 
-    this.socket.emit('call:accept', { callId }, (res) => {
-      if (session !== this.session) {
-        if (res.ok) this.socket.emit('call:leave');
-        return;
-      }
-      if (!res.ok) {
-        this.events.onNotice(res.error, 'error');
-        this.cleanup();
-        return;
-      }
+    this.socket.emit('call:accept', { callId, video }, this.callAck(session, (res) => {
       this.setInfo({ ...this.info, participants: res.participants });
       for (const peerId of res.participants) void this.connectTo(peerId);
-    });
+    }));
   }
 
   rejectIncoming(reason = 'declined'): void {
@@ -212,9 +218,44 @@ export class CallManager {
     return this.toggleTracks(this.localStream?.getAudioTracks() ?? []);
   }
 
-  /** @returns whether the camera is now enabled. */
-  toggleCamera(): boolean {
-    return this.toggleTracks(this.localStream?.getVideoTracks() ?? []);
+  get isCameraOn(): boolean {
+    return this.cameraTrack() !== null;
+  }
+
+  /**
+   * Turns the camera off (releasing it), or on — asking for it if needed, so a call
+   * started audio-only can switch to video at any time. Every connection already has a
+   * video slot, so this swaps the outgoing track without renegotiating.
+   * @returns whether the camera is now on.
+   */
+  async toggleCamera(): Promise<boolean> {
+    if (this.state !== 'in-call') return false;
+    const current = this.cameraTrack();
+    if (current) {
+      current.stop();
+      this.setCameraTrack(null);
+      return false;
+    }
+
+    if (!navigator.mediaDevices?.getUserMedia) {
+      this.events.onNotice('The camera needs HTTPS or localhost.', 'error');
+      return false;
+    }
+    const session = this.session;
+    let track: MediaStreamTrack | undefined;
+    try {
+      track = (await navigator.mediaDevices.getUserMedia({ video: true })).getVideoTracks()[0];
+    } catch (err) {
+      console.warn('Camera unavailable', err);
+      this.events.onNotice('Could not turn on the camera. Check that it is allowed and not in use.', 'error');
+      return false;
+    }
+    if (!track || session !== this.session || this.cameraTrack()) {
+      track?.stop();
+      return this.isCameraOn;
+    }
+    this.setCameraTrack(track);
+    return true;
   }
 
   hasLocalTrack(kind: 'audio' | 'video'): boolean {
@@ -264,8 +305,48 @@ export class CallManager {
 
   // ---- Internals ----
 
+  /**
+   * Ack for a request that starts or joins a call. It is ignored if the user hung up
+   * in the meantime and ends the call on error. If no reply arrives, it gives up and
+   * leaves any call the server may still have put us in.
+   */
+  private callAck<T extends { ok: true }>(
+    session: number,
+    onOk: (res: T) => void,
+  ): (res: T | { ok: false; error: string }) => void {
+    return withTimeout(
+      (res: T | { ok: false; error: string }) => {
+        if (session !== this.session) {
+          if (res.ok) this.socket.emit('call:leave');
+          return;
+        }
+        if (!res.ok) {
+          this.events.onNotice(res.error, 'error');
+          this.cleanup();
+          return;
+        }
+        onOk(res);
+      },
+      () => {
+        if (session === this.session && this.socket.connected) this.socket.emit('call:leave');
+      },
+    );
+  }
+
   private cameraTrack(): MediaStreamTrack | null {
     return this.localStream?.getVideoTracks()[0] ?? null;
+  }
+
+  /** Replaces the local camera (null = off) and tells the peers. */
+  private setCameraTrack(track: MediaStreamTrack | null): void {
+    const audio = this.localStream?.getAudioTracks() ?? [];
+    // A new stream object, so the preview <video> picks up the change.
+    this.localStream = new MediaStream(track ? [...audio, track] : audio);
+    if (!this.screenTrack) {
+      void this.replaceOutgoingVideo(track);
+      this.events.onLocalStream(this.localStream, false);
+    }
+    this.socket.emit('call:camera', { on: track !== null });
   }
 
   private async replaceOutgoingVideo(track: MediaStreamTrack | null): Promise<void> {
@@ -311,6 +392,7 @@ export class CallManager {
       this.events.onNotice(`${userId} joined the call.`, 'success');
       // Let the newcomer know we're sharing (their offer to us will arrive shortly).
       if (this.screenTrack) this.socket.emit('call:screen', { sharing: true });
+      if (!this.isCameraOn) this.socket.emit('call:camera', { on: false });
     });
 
     this.socket.on('call:peer-left', ({ callId, userId, reason }) => {
@@ -337,6 +419,11 @@ export class CallManager {
     this.socket.on('call:screen', ({ from, sharing }) => {
       if (!this.peers.has(from) && !this.info.participants.includes(from)) return;
       this.events.onPeerScreen(from, sharing);
+    });
+
+    this.socket.on('call:camera', ({ from, on }) => {
+      if (!this.peers.has(from) && !this.info.participants.includes(from)) return;
+      this.events.onPeerCamera(from, on);
     });
 
     this.socket.on('webrtc:offer', async ({ from, sdp }) => {
@@ -400,7 +487,7 @@ export class CallManager {
   private createPeer(peerId: string, isOfferer: boolean): Peer {
     this.removePeer(peerId);
     const pc = new RTCPeerConnection({ iceServers: this.iceServers });
-    const peer: Peer = { id: peerId, pc, pendingIce: [], stream: new MediaStream() };
+    const peer: Peer = { id: peerId, pc, pendingIce: [], stream: new MediaStream(), isOfferer, restarts: 0 };
     this.peers.set(peerId, peer);
 
     const local = this.localStream ?? new MediaStream();
@@ -426,20 +513,47 @@ export class CallManager {
 
     pc.onconnectionstatechange = () => {
       if (this.peers.get(peerId) !== peer) return;
-      this.events.onPeerConnectionState(peerId, pc.connectionState);
-      if (pc.connectionState === 'failed') {
+      const state = pc.connectionState;
+      clearTimeout(peer.restartTimer);
+      if (state === 'connected') {
+        peer.restarts = 0;
+      } else if (state === 'disconnected' && peer.isOfferer) {
+        // Usually a brief network hiccup that heals itself; restart ICE only if it doesn't.
+        peer.restartTimer = setTimeout(() => void this.restartIce(peer), DISCONNECT_GRACE_MS);
+      } else if (state === 'failed' && peer.isOfferer && peer.restarts < MAX_ICE_RESTARTS) {
+        void this.restartIce(peer);
+        this.events.onPeerConnectionState(peerId, 'disconnected'); // shown as "Reconnecting…"
+        return;
+      } else if (state === 'failed' && peer.isOfferer) {
         this.events.onNotice(`Connection to ${peerId} failed. A TURN server may be needed.`, 'error');
       }
+      this.events.onPeerConnectionState(peerId, state);
     };
 
     this.events.onPeerStream(peerId, peer.stream);
     return peer;
   }
 
+  /** Renegotiates with fresh ICE candidates (e.g. after switching from Wi-Fi to mobile data). */
+  private async restartIce(peer: Peer): Promise<void> {
+    if (this.peers.get(peer.id) !== peer || peer.pc.signalingState !== 'stable') return;
+    if (!this.socket.connected || peer.pc.connectionState === 'connected') return;
+    peer.restarts++;
+    try {
+      const offer = await peer.pc.createOffer({ iceRestart: true });
+      if (this.peers.get(peer.id) !== peer) return;
+      await peer.pc.setLocalDescription(offer);
+      this.socket.emit('webrtc:offer', { to: peer.id, sdp: { type: 'offer', sdp: offer.sdp ?? '' } });
+    } catch (err) {
+      console.warn(`ICE restart with ${peer.id} failed`, err);
+    }
+  }
+
   private removePeer(peerId: string): void {
     const peer = this.peers.get(peerId);
     if (!peer) return;
     this.peers.delete(peerId);
+    clearTimeout(peer.restartTimer);
     peer.pc.onicecandidate = peer.pc.ontrack = peer.pc.onconnectionstatechange = null;
     peer.pc.close();
     this.events.onPeerRemoved(peerId);
@@ -494,6 +608,7 @@ export class CallManager {
 
   private cleanup(): void {
     this.session++;
+    this.accepting = false;
     if (this.screenTrack) {
       this.screenTrack.onended = null;
       this.screenTrack.stop();
