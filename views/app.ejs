@@ -201,14 +201,15 @@
           <span id="stage-placeholder-text"></span>
         </div>
         <span id="call-timer" class="call-timer" role="timer" aria-label="Call duration" hidden>00:00</span>
-        <!-- Our own camera: a corner preview; tap it to make it the big picture (tap again to go back). -->
-        <div id="local-tile" class="local-tile is-mirrored" role="button" tabindex="0" aria-label="Your camera. Tap to make it big." hidden>
-          <video id="local-video" class="local-video" autoplay playsinline muted></video>
-          <span class="tile-label local-label"><span class="tile-name">You</span></span>
+        <!-- Our own tile (moved into the grid by the app): our camera, or our picture while it's off -->
+        <div id="local-tile" class="tile self-tile is-mirrored" hidden>
+          <div id="local-avatar" class="tile-avatar"></div>
+          <video id="local-video" autoplay playsinline muted></video>
+          <div class="tile-label"><span class="tile-name">You</span></div>
         </div>
         <div class="stage-actions">
-          <button id="layout-btn" class="stage-btn" type="button" hidden title="Side by side" aria-label="Side by side">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5Zm2 0v14h6V5H5Zm8 0v14h6V5h-6Z"/></svg>
+          <button id="layout-btn" class="stage-btn" type="button" hidden title="Show everyone" aria-label="Show everyone">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3h8v8H3V3Zm2 2v4h4V5H5Zm8-2h8v8h-8V3Zm2 2v4h4V5h-4ZM3 13h8v8H3v-8Zm2 2v4h4v-4H5Zm8-2h8v8h-8v-8Zm2 2v4h4v-4h-4Z"/></svg>
           </button>
           <button id="call-minimize-btn" class="stage-btn" type="button" hidden title="Minimize the call (it keeps going)" aria-label="Minimize the call">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.41 8.59 12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41Z"/></svg>

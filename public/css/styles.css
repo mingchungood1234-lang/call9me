@@ -922,6 +922,7 @@ body.in-call .call-status { background: var(--primary-soft); color: var(--primar
 }
 .call-timer::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: var(--danger); animation: pulse 1.6s ease-in-out infinite; }
 
+/* Everyone in the call (us included) gets an equal tile: two people split the stage in halves. */
 .remote-grid {
   position: absolute;
   inset: 0;
@@ -936,6 +937,10 @@ body.in-call .call-status { background: var(--primary-soft); color: var(--primar
 .remote-grid[data-count='3'], .remote-grid[data-count='4'] { --cols: 2; }
 .remote-grid[data-count='5'], .remote-grid[data-count='6'],
 .remote-grid[data-count='7'], .remote-grid[data-count='8'], .remote-grid[data-count='9'] { --cols: 3; }
+/* A tall screen (a phone held upright): two people one above the other. */
+@media (orientation: portrait) {
+  .remote-grid[data-count='2'] { --cols: 1; }
+}
 
 .tile {
   position: relative;
@@ -946,15 +951,19 @@ body.in-call .call-status { background: var(--primary-soft); color: var(--primar
   display: grid;
   place-items: center;
   color: #fff;
+  cursor: pointer;
   animation: pop-in 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
+.tile[hidden] { display: none; }
+.tile:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
 /* Videos ignore taps/clicks so nothing can pause them; the tile handles its own controls. */
 .tile video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: opacity 0.25s; pointer-events: none; }
 .tile:fullscreen { border-radius: 0; background: #000; }
 .tile:fullscreen video { object-fit: contain; }
-.local-video { pointer-events: none; }
 .tile.has-video video { opacity: 1; }
 .tile.has-video .tile-avatar { visibility: hidden; }
+/* Our own front camera is shown like a mirror. */
+.self-tile.is-mirrored video { transform: scaleX(-1); }
 .tile-avatar {
   width: clamp(52px, 28%, 104px);
   aspect-ratio: 1;
@@ -970,10 +979,11 @@ body.in-call .call-status { background: var(--primary-soft); color: var(--primar
   position: absolute;
   left: 8px;
   bottom: 8px;
+  z-index: 2;
   display: flex;
   gap: 6px;
   align-items: center;
-  max-width: calc(100% - 16px);
+  max-width: calc(100% - 58px);
   padding: 3px 10px;
   border-radius: 8px;
   background: var(--overlay);
@@ -984,10 +994,12 @@ body.in-call .call-status { background: var(--primary-soft); color: var(--primar
 .tile-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tile-status { color: #fbbf24; white-space: nowrap; }
 .tile-status:empty { display: none; }
+/* Bottom right, clear of the stage's own buttons at the top. */
 .tile-fullscreen {
   position: absolute;
-  top: 8px;
   right: 8px;
+  bottom: 8px;
+  z-index: 2;
   width: 34px;
   height: 34px;
   border: 0;
@@ -999,40 +1011,67 @@ body.in-call .call-status { background: var(--primary-soft); color: var(--primar
   opacity: 0;
   transition: opacity 0.15s;
 }
-.tile:hover .tile-fullscreen, .tile.is-sharing .tile-fullscreen { opacity: 1; }
-.tile.is-sharing::after {
-  content: 'Screen';
-  position: absolute;
-  top: 8px;
-  left: 8px;
-  padding: 2px 8px;
-  border-radius: 6px;
-  background: var(--gradient);
-  font-size: 0.7rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
+.tile:hover .tile-fullscreen, .tile.is-focused .tile-fullscreen { opacity: 1; }
 
-/* Someone is sharing their screen: feature it, other people in a strip below. */
-.stage.has-screen .remote-grid {
+/* Ringing, nobody else here yet: our camera fills the stage behind "Calling…". */
+.stage.solo .remote-grid:not([data-count='0']) ~ .stage-placeholder { background: rgba(7, 9, 20, 0.45); color: #fff; }
+
+/* Maximized (tap a tile): it fills the stage, everyone else in a strip below. Tap it again to go back. */
+.stage.has-focus .remote-grid {
   grid-template-columns: none;
   grid-auto-flow: column;
   grid-auto-columns: minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr) 96px;
 }
-.stage.has-screen .tile.is-sharing { grid-row: 1; grid-column: 1 / -1; background: #000; }
-.stage.has-screen .tile:not(.is-sharing) { grid-row: 2; }
-.stage.has-screen .remote-grid[data-count='1'] { grid-template-rows: minmax(0, 1fr); }
-.tile.is-sharing video { object-fit: contain; }
+.stage.has-focus .tile.is-focused { grid-row: 1; grid-column: 1 / -1; background: #000; }
+.stage.has-focus .tile:not(.is-focused) { grid-row: 2; }
+.stage.has-focus .remote-grid[data-count='1'] { grid-template-rows: minmax(0, 1fr); }
+.tile.is-focused video { object-fit: contain; }
+.stage.has-focus .tile:not(.is-focused) .tile-avatar { width: auto; height: 56%; font-size: 1rem; box-shadow: none; }
+.stage.has-focus .tile:not(.is-focused) .tile-fullscreen { display: none; }
+.stage.has-focus .tile:not(.is-focused) .tile-label { left: 4px; bottom: 4px; max-width: calc(100% - 8px); padding: 1px 6px; font-size: 0.7rem; }
 
-/* Watching a share is optional: the sharer's tile has "Hide screen" / "Show screen". */
+/* A screen share is a tile of its own (next to the sharer's camera), watched by choice. */
+.screen-tile { background: #000; }
+.screen-tile video { object-fit: contain; }
+.screen-tile::after {
+  content: 'Live';
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 2;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: var(--danger);
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.screen-card {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 12px;
+  padding: 12px;
+  text-align: center;
+  background: radial-gradient(circle at 50% 40%, hsl(var(--h, 240) 45% 30%), #0b0d18 75%);
+}
+.screen-card p { margin: 0; font-weight: 600; }
+.screen-tile.is-watching .screen-card { display: none; }
+.stage.has-focus .tile:not(.is-focused) .screen-card p { display: none; }
+.stage.has-focus .tile:not(.is-focused) .screen-watch { min-height: 0; padding: 4px 10px; font-size: 0.75rem; }
+/* "Stop watching", top middle of a share we're watching. */
 .tile-screen-toggle {
   position: absolute;
   top: 8px;
   left: 50%;
   transform: translateX(-50%);
-  z-index: 1;
+  z-index: 2;
+  display: none;
   padding: 6px 12px;
   border: 0;
   border-radius: 9px;
@@ -1046,94 +1085,9 @@ body.in-call .call-status { background: var(--primary-soft); color: var(--primar
   -webkit-backdrop-filter: blur(8px);
   backdrop-filter: blur(8px);
 }
-.tile-screen-toggle[hidden] { display: none; }
+.screen-tile.is-watching .tile-screen-toggle { display: block; }
 .tile-screen-toggle:hover { background: rgba(255, 255, 255, 0.28); }
-/* A hidden share: their picture, a "Screen hidden" badge, and "Show screen" under the picture. */
-.tile.screen-hidden::after {
-  content: 'Screen hidden';
-  position: absolute;
-  top: 8px;
-  left: 8px;
-  padding: 2px 8px;
-  border-radius: 6px;
-  background: var(--overlay);
-  font-size: 0.7rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-.tile.screen-hidden .tile-screen-toggle { top: auto; bottom: 44px; }
-
-/* Our own camera: a corner preview (tap it to make it the big picture). */
-.local-tile {
-  position: absolute;
-  right: 14px;
-  bottom: 14px;
-  width: 22%;
-  max-width: 210px;
-  min-width: 96px;
-  aspect-ratio: 4 / 3;
-  border-radius: 12px;
-  border: 2px solid rgba(255, 255, 255, 0.18);
-  overflow: hidden;
-  background: #000;
-  z-index: 2;
-  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.45);
-  cursor: pointer;
-  transition: border-color 0.15s;
-}
-.local-tile[hidden] { display: none; }
-.local-tile:hover, .local-tile:focus-visible { border-color: rgba(255, 255, 255, 0.55); outline: none; }
-.local-video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
-.local-tile.is-mirrored .local-video { transform: scaleX(-1); }
-.local-video.is-screen { object-fit: contain; }
-.local-label { display: none; }
-.stage.has-screen .local-tile { bottom: 112px; }
-
-/* Our camera as the big picture: the others shrink to the corner (tap one to go back). */
-.stage.self-focus .local-tile {
-  inset: 0;
-  width: auto;
-  max-width: none;
-  min-width: 0;
-  aspect-ratio: auto;
-  border: 0;
-  border-radius: 0;
-  box-shadow: none;
-  z-index: 1;
-}
-.stage.self-focus .remote-grid {
-  inset: auto 14px 14px auto;
-  width: min(28%, 220px);
-  min-width: 96px;
-  max-height: calc(100% - 28px);
-  padding: 0;
-  grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: none;
-  grid-auto-flow: row;
-  grid-auto-rows: auto;
-  overflow-y: auto;
-  z-index: 2;
-}
-.stage.self-focus .tile { aspect-ratio: 4 / 3; border: 2px solid rgba(255, 255, 255, 0.18); box-shadow: 0 12px 30px rgba(0, 0, 0, 0.45); cursor: pointer; }
-.stage.self-focus .tile-avatar { width: 40%; font-size: 1.1rem; }
-.stage.self-focus .local-label, .stage.layout-split .local-label { display: flex; }
-
-/* Two people, both cameras on: equal halves, side by side (one above the other on a tall screen). */
-.stage.layout-split .remote-grid { right: 50%; padding-right: 4px; }
-.stage.layout-split .local-tile {
-  inset: 8px 8px 8px calc(50% + 4px);
-  width: auto;
-  max-width: none;
-  min-width: 0;
-  aspect-ratio: auto;
-  border: 0;
-  box-shadow: none;
-}
-@media (orientation: portrait) {
-  .stage.layout-split .remote-grid { right: 0; bottom: 50%; padding-right: 8px; padding-bottom: 4px; }
-  .stage.layout-split .local-tile { inset: calc(50% + 4px) 8px 8px 8px; }
-}
+.stage.has-focus .tile:not(.is-focused) .tile-screen-toggle { display: none; }
 
 /* Layout and minimize buttons, top right of the call. */
 .stage-actions { position: absolute; top: 10px; right: 10px; z-index: 4; display: flex; gap: 6px; }
@@ -1153,9 +1107,6 @@ body.in-call .call-status { background: var(--primary-soft); color: var(--primar
 .stage-btn[hidden] { display: none; }
 .stage-btn svg { width: 22px; height: 22px; fill: currentColor; }
 .stage-btn:hover, .stage-btn.active { background: rgba(255, 255, 255, 0.28); }
-/* Tiles' own full-screen buttons go bottom right, clear of the stage buttons above. */
-.tile-fullscreen { top: auto; bottom: 8px; }
-.tile-label { max-width: calc(100% - 58px); }
 
 /* ---------- Full-screen call ---------- */
 /* In a call the call covers the whole app; "minimize" (⌄) goes back to the app while it goes on. */
@@ -1620,14 +1571,9 @@ html.standalone :is(input, textarea, .msg-text, .room-banner-label) { -webkit-us
   .call-panel .panel-head { justify-content: center; }
   .call-status { text-align: center; }
 
-  .remote-grid[data-count='2'] { --cols: 1; }
   .remote-grid[data-count='5'], .remote-grid[data-count='6'] { --cols: 2; }
-  .local-tile { width: 28%; min-width: 84px; right: 10px; bottom: 10px; border-radius: 10px; }
+  .stage.has-focus .remote-grid { grid-template-rows: minmax(0, 1fr) 76px; gap: 6px; padding: 6px; }
 
-  /* Phones only watch a screen share: show just the shared screen, full stage. */
-  .stage.has-screen .tile:not(.is-sharing),
-  .stage.has-screen .local-tile { display: none; }
-  .stage.has-screen .remote-grid { grid-template-rows: minmax(0, 1fr); padding: 0; }
   .tile-fullscreen { opacity: 1; }
 
   /* Phone call controls: big round icons with a caption underneath, so mute/camera state is obvious. */

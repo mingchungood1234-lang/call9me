@@ -23,15 +23,19 @@ export interface CallInfo {
 
 export interface CallEvents {
   onStateChange(info: CallInfo): void;
-  /** `isScreen` is true while the local preview shows our own screen share. */
-  onLocalStream(stream: MediaStream | null, isScreen: boolean): void;
+  /** Our camera and microphone (null: none). */
+  onLocalStream(stream: MediaStream | null): void;
+  /** A peer's camera and microphone. */
   onPeerStream(peerId: string, stream: MediaStream): void;
+  /** A peer's screen-share video (its own slot, next to their camera; it only has frames while they share). */
+  onPeerScreenStream(peerId: string, stream: MediaStream): void;
   onPeerConnectionState(peerId: string, state: RTCPeerConnectionState): void;
   onPeerRemoved(peerId: string): void;
   onPeerScreen(peerId: string, sharing: boolean): void;
   /** A peer switched their camera on or off. */
   onPeerCamera(peerId: string, on: boolean): void;
-  onLocalScreen(sharing: boolean): void;
+  /** Our own screen share (null: not sharing). */
+  onLocalScreen(stream: MediaStream | null): void;
   onIncoming(from: string, video: boolean, participants: string[], roomId: string | null): void;
   /** A call we just left can still be rejoined (until `call.until`), or not any more (null). */
   onRejoinable(call: CallRejoin | null): void;
@@ -46,7 +50,10 @@ interface Peer {
   id: string;
   pc: RTCPeerConnection;
   pendingIce: RTCIceCandidateInit[];
+  /** Their camera and microphone. */
   stream: MediaStream;
+  /** Their screen share, from the second video slot. */
+  screenStream: MediaStream | null;
   /** Only the offerer restarts ICE, so both sides never send offers at once. */
   isOfferer: boolean;
   restarts: number;
@@ -83,9 +90,11 @@ export function canShareScreen(): boolean {
  * Group calls as a full mesh: one RTCPeerConnection per other participant.
  *
  * Joining: whoever accepts an invite sends an offer to every existing participant,
- * so each pair has exactly one offerer (no glare). Every connection negotiates a
- * send-capable video transceiver (even voice calls), so a screen share can be
- * switched on later with `replaceTrack` and no renegotiation.
+ * so each pair has exactly one offerer (no glare). Every connection negotiates two
+ * send-capable video transceivers (even voice calls): the first for the camera, the
+ * second for a screen share, so both can be on at once and either switched with
+ * `replaceTrack`, no renegotiation. A peer on an older version negotiates only one;
+ * then a screen share replaces the camera there, as before.
  */
 export class CallManager {
   private info: CallInfo = { ...IDLE };
@@ -344,10 +353,9 @@ export class CallManager {
     this.screenTrack = track;
     // Fires when the user presses the browser's own "Stop sharing" bar.
     track.onended = () => void this.stopScreenShare();
-    await this.replaceOutgoingVideo(track);
+    await this.syncVideoSenders();
 
-    this.events.onLocalStream(stream, true);
-    this.events.onLocalScreen(true);
+    this.events.onLocalScreen(stream);
     this.socket.emit('call:screen', { sharing: true });
   }
 
@@ -358,12 +366,9 @@ export class CallManager {
     track.onended = null;
     track.stop();
 
-    await this.replaceOutgoingVideo(this.cameraTrack());
-    if (this.state !== 'idle') {
-      this.events.onLocalStream(this.localStream, false);
-      this.socket.emit('call:screen', { sharing: false });
-    }
-    this.events.onLocalScreen(false);
+    await this.syncVideoSenders();
+    if (this.state !== 'idle') this.socket.emit('call:screen', { sharing: false });
+    this.events.onLocalScreen(null);
   }
 
   /** The call we're in on another of our devices, if any (see `moveHere`). */
@@ -429,7 +434,7 @@ export class CallManager {
    */
   async flipCamera(): Promise<boolean> {
     const current = this.cameraTrack();
-    if (this.state !== 'in-call' || !current || this.screenTrack || this.flipping) return false;
+    if (this.state !== 'in-call' || !current || this.flipping) return false;
     this.flipping = true;
     const session = this.session;
     const next: CameraFacing = this.facing === 'user' ? 'environment' : 'user';
@@ -521,17 +526,25 @@ export class CallManager {
     const audio = this.localStream?.getAudioTracks() ?? [];
     // A new stream object, so the preview <video> picks up the change.
     this.localStream = new MediaStream(track ? [...audio, track] : audio);
-    if (!this.screenTrack) {
-      void this.replaceOutgoingVideo(track);
-      this.events.onLocalStream(this.localStream, false);
-    }
+    void this.syncVideoSenders();
+    this.events.onLocalStream(this.localStream);
     if (announce) this.socket.emit('call:camera', { on: track !== null });
   }
 
-  private async replaceOutgoingVideo(track: MediaStreamTrack | null): Promise<void> {
-    await Promise.all(
-      [...this.peers.values()].map((peer) => this.videoSender(peer.pc)?.replaceTrack(track).catch(() => {})),
-    );
+  /** Puts the camera and the screen share on every connection's video slots. */
+  private async syncVideoSenders(): Promise<void> {
+    await Promise.all([...this.peers.values()].map((peer) => this.syncPeerVideo(peer.pc)));
+  }
+
+  private async syncPeerVideo(pc: RTCPeerConnection): Promise<void> {
+    const [camera, screen] = this.videoTransceivers(pc);
+    const set = (t: RTCRtpTransceiver | undefined, track: MediaStreamTrack | null) =>
+      t && t.sender.track !== track ? t.sender.replaceTrack(track).catch(() => {}) : undefined;
+    if (screen) {
+      await Promise.all([set(camera, this.cameraTrack()), set(screen, this.screenTrack)]);
+    } else {
+      await set(camera, this.screenTrack ?? this.cameraTrack()); // older peer: one slot, the share wins
+    }
   }
 
   private toggleTracks(tracks: MediaStreamTrack[]): boolean {
@@ -541,9 +554,9 @@ export class CallManager {
     return enabled;
   }
 
-  private videoSender(pc: RTCPeerConnection): RTCRtpSender | undefined {
-    return pc.getTransceivers().find((t) => t.receiver.track.kind === 'video' && t.currentDirection !== 'stopped')
-      ?.sender;
+  /** The video slots in negotiation order: [camera, screen share] (just the camera with an older peer). */
+  private videoTransceivers(pc: RTCPeerConnection): RTCRtpTransceiver[] {
+    return pc.getTransceivers().filter((t) => t.receiver.track.kind === 'video' && t.currentDirection !== 'stopped');
   }
 
   private bindSocket(): void {
@@ -654,6 +667,7 @@ export class CallManager {
             t.direction = 'sendrecv';
           }
         }
+        await this.syncPeerVideo(peer.pc); // e.g. we're sharing already: the screen goes in its slot
         await this.flushPendingIce(peer);
         const answer = await peer.pc.createAnswer();
         await peer.pc.setLocalDescription(answer);
@@ -704,26 +718,34 @@ export class CallManager {
   private createPeer(peerId: string, isOfferer: boolean): Peer {
     this.removePeer(peerId);
     const pc = new RTCPeerConnection({ iceServers: this.iceServers });
-    const peer: Peer = { id: peerId, pc, pendingIce: [], stream: new MediaStream(), isOfferer, restarts: 0 };
+    const peer: Peer = { id: peerId, pc, pendingIce: [], stream: new MediaStream(), screenStream: null, isOfferer, restarts: 0 };
     this.peers.set(peerId, peer);
 
     const local = this.localStream ?? new MediaStream();
     this.localStream?.getAudioTracks().forEach((track) => pc.addTrack(track, local));
-    const outgoingVideo = this.screenTrack ?? this.cameraTrack();
-    if (outgoingVideo) pc.addTrack(outgoingVideo, local);
+    const camera = this.cameraTrack();
+    if (camera) pc.addTrack(camera, local); // the first video slot: the camera
 
     if (isOfferer) {
       // Still ask to receive audio we cannot send (no mic).
       if (!this.hasLocalTrack('audio')) pc.addTransceiver('audio', { direction: 'recvonly' });
-      // Always negotiate video (even for voice calls) so anyone can share a screen later.
-      if (!outgoingVideo) pc.addTransceiver('video', { direction: 'sendrecv' });
+      // Always negotiate video (even for voice calls), so cameras can be turned on later…
+      if (!camera) pc.addTransceiver('video', { direction: 'sendrecv' });
+      // …and a second slot for a screen share, shown next to the camera.
+      pc.addTransceiver(this.screenTrack ?? 'video', { direction: 'sendrecv' });
     }
 
     pc.onicecandidate = ({ candidate }) => {
       if (candidate) this.socket.emit('webrtc:ice', { to: peerId, candidate: candidate.toJSON() as IceCandidate });
     };
 
-    pc.ontrack = ({ track }) => {
+    pc.ontrack = ({ track, transceiver }) => {
+      // The second video slot carries their screen share.
+      if (track.kind === 'video' && this.videoTransceivers(pc).indexOf(transceiver) === 1) {
+        peer.screenStream = new MediaStream([track]);
+        this.events.onPeerScreenStream(peerId, peer.screenStream);
+        return;
+      }
       if (!peer.stream.getTracks().includes(track)) peer.stream.addTrack(track);
       this.events.onPeerStream(peerId, peer.stream);
     };
@@ -815,7 +837,7 @@ export class CallManager {
 
   private setLocalStream(stream: MediaStream | null): void {
     this.localStream = stream;
-    this.events.onLocalStream(stream, false);
+    this.events.onLocalStream(stream);
   }
 
   private setInfo(info: CallInfo): void {
@@ -830,12 +852,12 @@ export class CallManager {
       this.screenTrack.onended = null;
       this.screenTrack.stop();
       this.screenTrack = null;
-      this.events.onLocalScreen(false);
+      this.events.onLocalScreen(null);
     }
     for (const peerId of [...this.peers.keys()]) this.removePeer(peerId);
     this.localStream?.getTracks().forEach((t) => t.stop());
     this.localStream = null;
-    this.events.onLocalStream(null, false);
+    this.events.onLocalStream(null);
     this.setInfo({ ...IDLE });
   }
 }

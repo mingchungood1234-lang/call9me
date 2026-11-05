@@ -53,6 +53,7 @@ const stageCallee = $('#stage-callee');
 const incomingAvatar = $('#incoming-avatar');
 const localVideo = $<HTMLVideoElement>('#local-video');
 const localTile = $('#local-tile');
+const localAvatar = $('#local-avatar');
 const layoutBtn = $<HTMLButtonElement>('#layout-btn');
 const minimizeBtn = $<HTMLButtonElement>('#call-minimize-btn');
 const flipBtn = $<HTMLButtonElement>('#flip-btn');
@@ -258,7 +259,10 @@ function repaintAvatars(): void {
   paintAvatar($('#me-avatar'), userId);
   paintAvatar(profileAvatar, userId);
   avatarRemoveBtn.hidden = !avatarUrlOf(userId);
-  for (const [peerId, tile] of tiles) paintAvatar(tile.root.querySelector<HTMLElement>('.tile-avatar')!, peerId);
+  for (const tile of [...tiles.values(), ...screenTiles.values()]) {
+    paintAvatar(tile.root.querySelector<HTMLElement>('.tile-avatar')!, tile.root.dataset.peer ?? '');
+  }
+  paintSelfTile();
   for (const node of [incomingAvatar, stageCallee]) if (node.dataset.person) paintAvatar(node, node.dataset.person);
   renderUsers();
   friends?.render();
@@ -450,65 +454,68 @@ function renderUserItem(u: OnlineUserSummary): HTMLLIElement {
   return item;
 }
 
-// ---- Participant tiles ----
+// ---- Call tiles ----
+// Everyone in the call gets an equal tile in one grid (us included); a screen share is a
+// tile of its own next to the sharer's camera, joined by choice ("Watch stream"). Tapping a
+// tile maximizes it, with the others in a strip below; tapping it again goes back to the grid.
 interface Tile {
   root: HTMLElement;
   video: HTMLVideoElement;
   status: HTMLElement;
-  /** "Hide screen" / "Show screen", shown while this person shares their screen. */
-  screenToggle: HTMLButtonElement;
 }
+/** People's camera tiles, by user ID (not ours). */
 const tiles = new Map<string, Tile>();
+/** Screen-share tiles, by the sharer's user ID (ours under our own ID). */
+const screenTiles = new Map<string, Tile>();
+/** Peers sharing their screen right now (from their `call:screen`). */
 const sharingPeers = new Set<string>();
-/** Shares we chose not to watch (until that person stops sharing); their tile shows their picture instead. */
-const hiddenShares = new Set<string>();
-/** People sharing a screen we're watching (featured on the stage). */
-const shownShares = () => [...sharingPeers].filter((id) => !hiddenShares.has(id));
-
-function setShareHidden(peerId: string, hidden: boolean): void {
-  if (!sharingPeers.has(peerId)) return;
-  if (hidden) hiddenShares.add(peerId);
-  else hiddenShares.delete(peerId);
-  layoutStage();
-}
+/** Screen shares we chose to watch; the others show a "Watch stream" card. */
+const watchedShares = new Set<string>();
+/** Each peer's screen-share video, which exists before (and between) their shares. */
+const peerScreenStreams = new Map<string, MediaStream>();
 /** Peers who switched their camera off (their video track may not report "muted" right away). */
 const cameraOffPeers = new Set<string>();
+/** The maximized tile ("cam:<id>", "screen:<id>", or "cam:" + our ID), or null for the grid. */
+let focusKey: string | null = null;
 
-function ensureTile(peerId: string): Tile {
-  let tile = tiles.get(peerId);
-  if (tile) return tile;
+const cameraKey = (id: string) => `cam:${id}`;
+const screenKey = (id: string) => `screen:${id}`;
 
+function tileShell(key: string, ownerId: string, name: string, extra: HTMLElement[] = []): Tile {
   const video = el('video');
   video.autoplay = true;
   video.playsInline = true;
   keepPlaying(video);
-  const status = el('span', { className: 'tile-status', text: 'Connecting…' });
+  const status = el('span', { className: 'tile-status' });
   const fullscreenBtn = el('button', { className: 'tile-fullscreen', title: 'Full screen', text: '⤢' });
   fullscreenBtn.type = 'button';
-  fullscreenBtn.addEventListener('click', () => enterFullscreen(root, video));
-
-  // Watching someone's screen is up to us: hide it (their picture shows instead), or show it again.
-  const screenToggle = el('button', { className: 'tile-screen-toggle', text: 'Hide screen' });
-  screenToggle.type = 'button';
-  screenToggle.hidden = true;
-  screenToggle.addEventListener('click', (e) => {
-    e.stopPropagation(); // not a tap on the tile (that would leave the "own camera big" view)
-    setShareHidden(peerId, !hiddenShares.has(peerId));
-  });
-
-  const tileAvatar = el('div', { className: 'tile-avatar', text: peerId.charAt(0).toUpperCase() });
-  paintAvatar(tileAvatar, peerId); // their profile picture while their camera is off
+  const tileAvatar = el('div', { className: 'tile-avatar', text: ownerId.charAt(0).toUpperCase() });
+  paintAvatar(tileAvatar, ownerId); // their profile picture while their camera is off
   const root = el('div', { className: 'tile' }, [
     tileAvatar,
     video,
-    el('div', { className: 'tile-label' }, [el('span', { className: 'tile-name', text: peerId }), status]),
-    screenToggle,
+    ...extra,
+    el('div', { className: 'tile-label' }, [el('span', { className: 'tile-name', text: name }), status]),
     fullscreenBtn,
   ]);
-  root.dataset.peer = peerId;
-  root.style.setProperty('--h', String(hueFor(peerId)));
-  remoteGrid.append(root);
-  tile = { root, video, status, screenToggle };
+  fullscreenBtn.addEventListener('click', (e) => {
+    e.stopPropagation(); // not a tap on the tile (that maximizes it)
+    enterFullscreen(root, video);
+  });
+  root.dataset.key = key;
+  root.dataset.peer = ownerId;
+  root.style.setProperty('--h', String(hueFor(ownerId)));
+  root.tabIndex = 0;
+  root.setAttribute('role', 'button');
+  return { root, video, status };
+}
+
+function ensureTile(peerId: string): Tile {
+  let tile = tiles.get(peerId);
+  if (tile) return tile;
+  tile = tileShell(cameraKey(peerId), peerId, peerId);
+  tile.status.textContent = 'Connecting…';
+  remoteGrid.append(tile.root);
   tiles.set(peerId, tile);
   layoutStage();
   return tile;
@@ -518,7 +525,73 @@ function removeTile(peerId: string): void {
   tiles.get(peerId)?.root.remove();
   tiles.delete(peerId);
   sharingPeers.delete(peerId);
-  hiddenShares.delete(peerId);
+  watchedShares.delete(peerId);
+  peerScreenStreams.delete(peerId);
+  removeScreenTile(peerId);
+  layoutStage();
+}
+
+/** A screen-share tile: ours (always shown), or a peer's with "Watch stream" / "Stop watching". */
+function ensureScreenTile(ownerId: string): Tile {
+  let tile = screenTiles.get(ownerId);
+  if (tile) return tile;
+  const mine = ownerId === userId;
+  const extra: HTMLElement[] = [];
+  if (!mine) {
+    const watch = el('button', { className: 'btn btn-primary screen-watch', text: 'Watch stream' });
+    watch.type = 'button';
+    watch.addEventListener('click', (e) => {
+      e.stopPropagation();
+      watchShare(ownerId, true);
+    });
+    const stop = el('button', { className: 'tile-screen-toggle', text: 'Stop watching' });
+    stop.type = 'button';
+    stop.addEventListener('click', (e) => {
+      e.stopPropagation();
+      watchShare(ownerId, false);
+    });
+    extra.push(el('div', { className: 'screen-card' }, [el('p', { text: `${ownerId} is sharing their screen` }), watch]), stop);
+  }
+  tile = tileShell(screenKey(ownerId), ownerId, mine ? 'Your screen' : `${ownerId}'s screen`, extra);
+  tile.root.classList.add('screen-tile');
+  tile.video.muted = true; // screens carry no sound
+  remoteGrid.append(tile.root);
+  screenTiles.set(ownerId, tile);
+  return tile;
+}
+
+function removeScreenTile(ownerId: string): void {
+  screenTiles.get(ownerId)?.root.remove();
+  screenTiles.delete(ownerId);
+  if (focusKey === screenKey(ownerId)) focusKey = null;
+}
+
+/** Watching a share maximizes it (like opening a stream); stopping goes back to the grid. */
+function watchShare(peerId: string, watch: boolean): void {
+  if (!sharingPeers.has(peerId)) return;
+  if (watch) {
+    watchedShares.add(peerId);
+    focusKey = screenKey(peerId);
+    screenTiles.get(peerId)?.video.play().catch(() => {});
+  } else {
+    watchedShares.delete(peerId);
+    if (focusKey === screenKey(peerId)) focusKey = null;
+  }
+  layoutStage();
+}
+
+/** A peer started or stopped sharing: their screen tile comes and goes. */
+function setPeerSharing(peerId: string, sharing: boolean): void {
+  if (sharing) {
+    sharingPeers.add(peerId);
+    const tile = ensureScreenTile(peerId);
+    const stream = peerScreenStreams.get(peerId);
+    if (stream && tile.video.srcObject !== stream) tile.video.srcObject = stream;
+  } else {
+    sharingPeers.delete(peerId);
+    watchedShares.delete(peerId);
+    removeScreenTile(peerId);
+  }
   layoutStage();
 }
 
@@ -570,15 +643,26 @@ keepPlaying(localVideo);
 // Opened from a notification, the browser may block call audio until the first tap.
 document.addEventListener('pointerdown', resumeAllVideos);
 
+// Our own camera tile lives in the grid with everyone else's.
+remoteGrid.append(localTile);
+localTile.dataset.key = cameraKey(userId);
+localTile.tabIndex = 0;
+localTile.setAttribute('role', 'button');
+localTile.style.setProperty('--h', String(hueFor(userId)));
+function paintSelfTile(): void {
+  localAvatar.textContent = userId.charAt(0).toUpperCase();
+  paintAvatar(localAvatar, userId);
+}
+paintSelfTile();
+
+const liveVideo = (stream: MediaStream | null | undefined) =>
+  stream?.getVideoTracks().some((t) => t.readyState === 'live' && !t.muted) ?? false;
+
 /** Shows the avatar instead of a black box while a peer sends no video or has their camera off. */
 function refreshTileVideo(peerId: string): void {
   const tile = tiles.get(peerId);
-  const stream = tile?.video.srcObject as MediaStream | null | undefined;
-  if (!tile || !stream) return;
-  const receiving = stream.getVideoTracks().some((t) => t.readyState === 'live' && !t.muted);
-  // A share we hid shows their picture (their camera is replaced by the screen while they share).
-  const watching = sharingPeers.has(peerId) ? !hiddenShares.has(peerId) : !cameraOffPeers.has(peerId);
-  tile.root.classList.toggle('has-video', receiving && watching);
+  if (!tile) return;
+  tile.root.classList.toggle('has-video', liveVideo(tile.video.srcObject as MediaStream | null) && !cameraOffPeers.has(peerId));
 }
 
 function watchVideoTracks(peerId: string, stream: MediaStream): void {
@@ -588,86 +672,58 @@ function watchVideoTracks(peerId: string, stream: MediaStream): void {
   refreshTileVideo(peerId);
 }
 
+/** Puts every tile in its place: an even grid, or one maximized with the others in a strip. */
 function layoutStage(): void {
-  remoteGrid.dataset.count = String(tiles.size);
-  const shown = new Set(shownShares());
-  stage.classList.toggle('has-screen', shown.size > 0);
-  for (const [peerId, tile] of tiles) {
-    const sharing = sharingPeers.has(peerId);
-    const hidden = hiddenShares.has(peerId);
-    tile.root.classList.toggle('is-sharing', sharing && !hidden);
-    tile.root.classList.toggle('screen-hidden', sharing && hidden);
-    tile.screenToggle.hidden = !sharing;
-    tile.screenToggle.textContent = hidden ? 'Show screen' : 'Hide screen';
-    tile.screenToggle.title = hidden ? `Watch ${peerId}'s screen` : `Stop watching ${peerId}'s screen`;
-    refreshTileVideo(peerId);
-  }
-  stagePlaceholder.hidden = tiles.size > 0;
-  applyLayout();
-}
-
-// ---- Call layout ----
-// One other person and both cameras on: side by side (or one above the other on a portrait
-// screen), unless switched to picture-in-picture. Tapping our own preview makes it the big
-// picture (the others shrink to the corner); tapping again, or tapping someone, goes back.
-const LAYOUT_KEY = 'call9me:callLayout';
-let layoutPref: 'split' | 'pip' = 'split';
-try {
-  if (localStorage.getItem(LAYOUT_KEY) === 'pip') layoutPref = 'pip';
-} catch {
-  /* storage unavailable: default layout */
-}
-let selfFocus = false;
-let localIsScreen = false;
-
-function localHasCamera(): boolean {
-  const stream = localVideo.srcObject as MediaStream | null;
-  return !localTile.hidden && !localIsScreen && (stream?.getVideoTracks().some((t) => t.readyState === 'live') ?? false);
-}
-
-function applyLayout(): void {
   const inCall = callsInfo?.state === 'in-call';
-  const only = tiles.size === 1 ? [...tiles.values()][0] : undefined;
-  const watchingShare = shownShares().length > 0;
-  const canSplit = inCall && !!only && only.root.classList.contains('has-video') && localHasCamera() && !watchingShare;
-  if (localTile.hidden || watchingShare) selfFocus = false;
-  const split = canSplit && !selfFocus && layoutPref === 'split';
-  stage.classList.toggle('self-focus', selfFocus);
-  stage.classList.toggle('layout-split', split);
-  layoutBtn.hidden = !canSplit;
-  const label = layoutPref === 'split' ? 'Picture in picture' : 'Side by side';
-  layoutBtn.title = label;
-  layoutBtn.setAttribute('aria-label', label);
-  layoutBtn.classList.toggle('active', split);
-  localTile.setAttribute('aria-label', selfFocus ? 'Your camera, full size. Tap to make it small.' : 'Your camera. Tap to make it full size.');
+  const others = tiles.size + screenTiles.size;
+  // Alone (still ringing): our camera fills the stage behind "Calling…", if it's on.
+  const selfVideo = liveVideo(localVideo.srcObject as MediaStream | null);
+  localTile.hidden = !inCall || (others === 0 && !selfVideo);
+  localTile.classList.toggle('has-video', selfVideo);
+  stage.classList.toggle('solo', inCall && others === 0);
+
+  for (const [ownerId, tile] of screenTiles) {
+    const watching = ownerId === userId || watchedShares.has(ownerId);
+    tile.root.classList.toggle('has-video', watching);
+    tile.root.classList.toggle('is-watching', watching);
+  }
+  for (const peerId of tiles.keys()) refreshTileVideo(peerId);
+
+  const all = [...remoteGrid.querySelectorAll<HTMLElement>(':scope > .tile:not([hidden])')];
+  if (focusKey && !all.some((t) => t.dataset.key === focusKey)) focusKey = null;
+  if (all.length < 2) focusKey = null; // nothing to maximize over
+  for (const tile of all) {
+    const focused = tile.dataset.key === focusKey;
+    tile.classList.toggle('is-focused', focused);
+    tile.title = focused ? 'Tap to go back to everyone' : 'Tap to maximize';
+  }
+  remoteGrid.dataset.count = String(all.length);
+  stage.classList.toggle('has-focus', focusKey !== null);
+  layoutBtn.hidden = focusKey === null;
+  layoutBtn.title = 'Show everyone';
+  layoutBtn.setAttribute('aria-label', 'Show everyone');
+  stagePlaceholder.hidden = others > 0;
 }
 
-function toggleSelfFocus(): void {
-  if (localTile.hidden) return;
-  selfFocus = !selfFocus;
-  applyLayout();
+function toggleFocus(key: string | undefined): void {
+  if (!key) return;
+  focusKey = focusKey === key ? null : key;
+  layoutStage();
 }
-localTile.addEventListener('click', toggleSelfFocus);
-localTile.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' || e.key === ' ') {
-    e.preventDefault();
-    toggleSelfFocus();
-  }
-});
-// While our camera is the big picture, tapping someone's small tile brings them back.
 remoteGrid.addEventListener('click', (e) => {
-  if (!selfFocus || (e.target as HTMLElement).closest('.tile-fullscreen')) return;
-  selfFocus = false;
-  applyLayout();
+  const tile = (e.target as HTMLElement).closest<HTMLElement>('.tile');
+  if (tile && !(e.target as HTMLElement).closest('button')) toggleFocus(tile.dataset.key);
+});
+remoteGrid.addEventListener('keydown', (e) => {
+  const tile = (e.target as HTMLElement).closest<HTMLElement>('.tile');
+  if (tile && e.target === tile && (e.key === 'Enter' || e.key === ' ')) {
+    e.preventDefault();
+    toggleFocus(tile.dataset.key);
+  }
 });
 layoutBtn.addEventListener('click', () => {
-  layoutPref = layoutPref === 'split' ? 'pip' : 'split';
-  try {
-    localStorage.setItem(LAYOUT_KEY, layoutPref);
-  } catch {
-    /* ignore */
-  }
-  applyLayout();
+  focusKey = null;
+  layoutStage();
 });
 
 // ---- Full-screen call (minimize to use the rest of the app while it goes on) ----
@@ -739,7 +795,7 @@ function renderElsewhere(): void {
 
 // ---- Camera flip (front ↔ back) ----
 async function refreshFlipButton(): Promise<void> {
-  const show = callsInfo.state === 'in-call' && !!calls?.isCameraOn && !calls.isSharingScreen;
+  const show = callsInfo.state === 'in-call' && !!calls?.isCameraOn;
   flipBtn.hidden = !(show && (await calls.canFlipCamera()));
 }
 flipBtn.addEventListener('click', async () => {
@@ -758,17 +814,15 @@ let callMode: CallMode = 'user';
 
 const calls = new CallManager(socket, userId, iceServers, {
   onStateChange: renderCallState,
-  onLocalStream: (stream, isScreen) => {
+  onLocalStream: (stream) => {
     localVideo.srcObject = stream;
-    localTile.hidden = !stream || stream.getVideoTracks().length === 0;
-    localIsScreen = isScreen;
-    localVideo.classList.toggle('is-screen', isScreen);
-    // Our own front camera is shown mirrored (like a mirror); the back camera and a shared screen aren't.
-    localTile.classList.toggle('is-mirrored', !isScreen && calls?.cameraFacing !== 'environment');
-    applyLayout();
+    // Our own front camera is shown mirrored (like a mirror); the back camera isn't.
+    localTile.classList.toggle('is-mirrored', calls?.cameraFacing !== 'environment');
+    for (const track of stream?.getVideoTracks() ?? []) track.onended = track.onmute = track.onunmute = () => layoutStage();
+    layoutStage();
     void refreshFlipButton();
   },
-  onFacingChange: (facing) => localTile.classList.toggle('is-mirrored', facing === 'user' && !localIsScreen),
+  onFacingChange: (facing) => localTile.classList.toggle('is-mirrored', facing === 'user'),
   onElsewhere: renderElsewhere,
   onRejoinable: renderElsewhere,
   onPeerStream: (peerId, stream) => {
@@ -776,6 +830,11 @@ const calls = new CallManager(socket, userId, iceServers, {
     if (tile.video.srcObject !== stream) tile.video.srcObject = stream;
     tile.video.play().catch(() => {});
     watchVideoTracks(peerId, stream);
+  },
+  onPeerScreenStream: (peerId, stream) => {
+    peerScreenStreams.set(peerId, stream);
+    const tile = screenTiles.get(peerId);
+    if (tile && tile.video.srcObject !== stream) tile.video.srcObject = stream;
   },
   onPeerConnectionState: (peerId, state) => {
     const tile = tiles.get(peerId);
@@ -791,23 +850,23 @@ const calls = new CallManager(socket, userId, iceServers, {
   },
   onPeerRemoved: removeTile,
   onPeerScreen: (peerId, sharing) => {
-    if (sharing) sharingPeers.add(peerId);
-    else sharingPeers.delete(peerId);
-    hiddenShares.delete(peerId); // each new share starts visible; hiding is per share
-    layoutStage();
-    if (sharing) toast(`${peerId} is sharing their screen. Use “Hide screen” on it if you'd rather not watch.`);
-    if (sharing && tabs.isPhone) tabs.show('call');
+    const wasSharing = sharingPeers.has(peerId);
+    setPeerSharing(peerId, sharing);
+    if (sharing && !wasSharing) toast(`${peerId} is sharing their screen. Press “Watch stream” to see it.`);
   },
   onPeerCamera: (peerId, on) => {
     if (on) cameraOffPeers.delete(peerId);
     else cameraOffPeers.add(peerId);
     refreshTileVideo(peerId);
   },
-  onLocalScreen: (sharing) => {
+  onLocalScreen: (stream) => {
+    const sharing = stream !== null;
     setButtonLabel(shareBtn, sharing ? 'Stop sharing' : 'Share screen', sharing);
     shareBtn.classList.toggle('active', sharing);
-    camBtn.disabled = sharing;
-    void refreshFlipButton();
+    // Our screen gets a tile of its own (a preview of what everyone can watch); our camera stays on.
+    if (stream) ensureScreenTile(userId).video.srcObject = stream;
+    else removeScreenTile(userId);
+    layoutStage();
   },
   onIncoming: (from, video, participants, roomId) => {
     showPerson(incomingAvatar, from);
@@ -899,20 +958,23 @@ function renderCallState(info: CallInfo): void {
     setButtonLabel(camBtn, 'Camera', false);
     micBtn.classList.remove('active');
     camBtn.classList.remove('active');
-    sharingPeers.clear();
-    hiddenShares.clear();
     cameraOffPeers.clear();
     for (const peerId of [...tiles.keys()]) removeTile(peerId);
+    for (const ownerId of [...screenTiles.keys()]) removeScreenTile(ownerId);
+    sharingPeers.clear();
+    watchedShares.clear();
+    peerScreenStreams.clear();
+    focusKey = null;
   }
   micBtn.disabled = !calls?.hasLocalTrack('audio');
   // In a call without microphone access: show the slashed mic, not a "Mute" that does nothing.
   if (inCall && micBtn.disabled) setButtonLabel(micBtn, 'No mic', true);
-  camBtn.disabled = !inCall || !!calls?.isSharingScreen;
+  camBtn.disabled = !inCall;
   if (inCall && calls) renderCameraButton(calls.isCameraOn);
   renderTimer(info);
 
   if (wasIdle && state !== 'idle') tabs.show('call');
-  applyLayout();
+  layoutStage();
   renderElsewhere();
   void refreshFlipButton();
   updateCallBadge();
@@ -1073,7 +1135,7 @@ camBtn.addEventListener('click', async () => {
   try {
     renderCameraButton(await calls.toggleCamera());
   } finally {
-    camBtn.disabled = callsInfo.state !== 'in-call' || calls.isSharingScreen;
+    camBtn.disabled = callsInfo.state !== 'in-call';
     void refreshFlipButton();
   }
 });
