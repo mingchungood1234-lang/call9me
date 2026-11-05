@@ -2,6 +2,7 @@ import type { Ack, CallElsewhere, CallRejoin, IceCandidate, PushPayload, Session
 import { isValidRoomId, PUBLIC_ROOM_ID, ROOM_ID_RULES } from '../../shared/validation';
 import { config } from '../config';
 import { accountModel } from '../models/AccountModel';
+import { avatarModel } from '../models/AvatarModel';
 import { callModel, type Call } from '../models/CallModel';
 import { roomSettingsModel } from '../models/RoomSettingsModel';
 import { userModel, type OnlineUser } from '../models/UserModel';
@@ -28,7 +29,14 @@ function isIceCandidate(value: unknown): value is IceCandidate {
 
 /** Uses the same tag as the "incoming call" push so it replaces that notification. */
 function missedCallPush(from: string): PushPayload {
-  return { type: 'missed-call', title: 'Missed call', body: `${from} tried to call you`, tag: `call-${from}`, url: '/app' };
+  return {
+    type: 'missed-call',
+    title: 'Missed call',
+    body: `${from} tried to call you`,
+    tag: `call-${from}`,
+    url: '/app',
+    icon: avatarModel.urlOf(from),
+  };
 }
 
 /** "Incoming call" notification; opening it answers the call (`/app?answer=<callId>`). */
@@ -44,6 +52,7 @@ function callPush(call: Call, from: string): PushPayload {
     tag: `call-${from}`,
     url: `/app?answer=${call.id}`,
     callId: call.id,
+    icon: avatarModel.urlOf(from), // the caller's picture (Android/desktop; iOS always shows the app icon)
   };
 }
 

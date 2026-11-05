@@ -24,6 +24,13 @@ export class AvatarModel {
     return Object.fromEntries([...this.avatars].map(([key, a]) => [key, `/avatars/${key}.${a.type}?v=${a.updatedAt}`]));
   }
 
+  /** One user's picture URL, if they have one. */
+  urlOf(userId: string): string | undefined {
+    const key = userId.toLowerCase();
+    const a = this.avatars.get(key);
+    return a ? `/avatars/${key}.${a.type}?v=${a.updatedAt}` : undefined;
+  }
+
   set(userId: string, type: ImageType, data: Buffer): void {
     const key = userId.toLowerCase();
     this.removeFile(key);

@@ -399,6 +399,8 @@ export interface PushPayload {
   url: string;
   /** For "call": lets the notification's Decline button reject the call without opening the app. */
   callId?: string;
+  /** Picture shown in the notification (e.g. the caller's profile picture); the app icon if unset. */
+  icon?: string;
 }
 
 /** What a push service (Apple, Google, Mozilla…) answered for one device. */

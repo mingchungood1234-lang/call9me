@@ -196,7 +196,10 @@
 
       <div id="stage" class="stage" data-state="idle">
         <div id="remote-grid" class="remote-grid" data-count="0"></div>
-        <div id="stage-placeholder" class="stage-placeholder"></div>
+        <div id="stage-placeholder" class="stage-placeholder">
+          <span id="stage-callee" class="avatar stage-callee" data-hue aria-hidden="true" hidden></span>
+          <span id="stage-placeholder-text"></span>
+        </div>
         <span id="call-timer" class="call-timer" role="timer" aria-label="Call duration" hidden>00:00</span>
         <!-- Our own camera: a corner preview; tap it to make it the big picture (tap again to go back). -->
         <div id="local-tile" class="local-tile is-mirrored" role="button" tabindex="0" aria-label="Your camera. Tap to make it big." hidden>
@@ -312,8 +315,12 @@
   </nav>
 
   <dialog id="incoming-dialog" class="incoming-dialog">
-    <div class="ring-icon" aria-hidden="true">
-      <svg viewBox="0 0 24 24"><path d="M6.6 10.8a15.1 15.1 0 0 0 6.6 6.6l2.2-2.2a1 1 0 0 1 1-.25 11.4 11.4 0 0 0 3.6.57 1 1 0 0 1 1 1V20a1 1 0 0 1-1 1A17 17 0 0 1 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1c0 1.25.2 2.45.57 3.57a1 1 0 0 1-.25 1L6.6 10.8Z"/></svg>
+    <!-- The caller's profile picture (or initial), ringing, with a small phone badge -->
+    <div class="incoming-caller">
+      <span id="incoming-avatar" class="avatar incoming-avatar" data-hue aria-hidden="true"></span>
+      <span class="ring-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><path d="M6.6 10.8a15.1 15.1 0 0 0 6.6 6.6l2.2-2.2a1 1 0 0 1 1-.25 11.4 11.4 0 0 0 3.6.57 1 1 0 0 1 1 1V20a1 1 0 0 1-1 1A17 17 0 0 1 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1c0 1.25.2 2.45.57 3.57a1 1 0 0 1-.25 1L6.6 10.8Z"/></svg>
+      </span>
     </div>
     <p id="incoming-text">Incoming call</p>
     <p id="incoming-sub" class="incoming-sub"></p>

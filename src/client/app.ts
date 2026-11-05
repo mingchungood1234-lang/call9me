@@ -48,6 +48,9 @@ const callTimer = $('#call-timer');
 const stage = $('#stage');
 const remoteGrid = $('#remote-grid');
 const stagePlaceholder = $('#stage-placeholder');
+const stagePlaceholderText = $('#stage-placeholder-text');
+const stageCallee = $('#stage-callee');
+const incomingAvatar = $('#incoming-avatar');
 const localVideo = $<HTMLVideoElement>('#local-video');
 const localTile = $('#local-tile');
 const layoutBtn = $<HTMLButtonElement>('#layout-btn');
@@ -256,6 +259,7 @@ function repaintAvatars(): void {
   paintAvatar(profileAvatar, userId);
   avatarRemoveBtn.hidden = !avatarUrlOf(userId);
   for (const [peerId, tile] of tiles) paintAvatar(tile.root.querySelector<HTMLElement>('.tile-avatar')!, peerId);
+  for (const node of [incomingAvatar, stageCallee]) if (node.dataset.person) paintAvatar(node, node.dataset.person);
   renderUsers();
   friends?.render();
   callHistory.render();
@@ -771,6 +775,7 @@ const calls = new CallManager(socket, userId, iceServers, {
     void refreshFlipButton();
   },
   onIncoming: (from, video, participants, roomId) => {
+    showPerson(incomingAvatar, from);
     incomingText.textContent = roomId
       ? `${from} invited you to room #${roomId}`
       : `${from} is ${video ? 'video' : 'voice'} calling you`;
@@ -786,6 +791,19 @@ const calls = new CallManager(socket, userId, iceServers, {
   },
   onNotice: (message, kind) => toast(message, kind),
 });
+
+/** Fills a big avatar (`.avatar[data-hue]`) with someone's picture or initial; null hides it. */
+function showPerson(node: HTMLElement, id: string | null): void {
+  node.hidden = id === null;
+  if (id === null) {
+    delete node.dataset.person;
+    return;
+  }
+  node.dataset.person = id;
+  node.textContent = id.charAt(0).toUpperCase();
+  node.style.setProperty('--h', String(hueFor(id)));
+  paintAvatar(node, id);
+}
 
 function renderCallState(info: CallInfo): void {
   const wasIdle = callsInfo.state === 'idle';
@@ -830,11 +848,15 @@ function renderCallState(info: CallInfo): void {
     if (away.length) status += ` · waiting for ${away.join(', ')}`;
   }
   callStatus.textContent = status;
-  stagePlaceholder.textContent = idle
+  stagePlaceholderText.textContent = idle
     ? callMode === 'room'
       ? 'Enter a room ID. Everyone who joins the same ID is in the same call.'
       : 'Pick someone from the online list, or type their ID, then press call.'
     : status;
+  // Ringing someone (nobody in the call yet): show who we're calling.
+  const callee = inCall && !roomId && participants.length === 0 && invited.length === 1 ? invited[0] : null;
+  showPerson(stageCallee, callee);
+  stagePlaceholder.classList.toggle('has-callee', callee !== null);
 
   if (state !== 'incoming' && incomingDialog.open) incomingDialog.close();
   if (state === 'idle') {

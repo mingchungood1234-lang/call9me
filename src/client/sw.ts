@@ -90,7 +90,7 @@ self.addEventListener('push', (event) => {
       } = {
         body: payload.body,
         tag: payload.tag,
-        icon: '/icons/icon-192.png',
+        icon: payload.icon ?? '/icons/icon-192.png',
         badge: '/icons/badge-72.png',
         data: { url: payload.url, callId: payload.callId, type: payload.type },
         renotify: payload.type !== 'chat',

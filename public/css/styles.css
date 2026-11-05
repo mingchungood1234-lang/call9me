@@ -1442,18 +1442,34 @@ body.in-call:not(.call-minimized) { overflow: hidden; }
 .incoming-sub { color: var(--muted); font-size: 0.9rem; margin: 0 0 22px; min-height: 1em; }
 .dialog-actions { display: flex; gap: 12px; justify-content: center; }
 .dialog-actions .btn { flex: 1; min-height: 50px; border-radius: 14px; }
-.ring-icon {
-  display: grid;
-  place-items: center;
-  width: 72px;
-  height: 72px;
-  margin: 0 auto;
-  border-radius: 50%;
-  background: var(--success);
-  color: #fff;
+/* The caller's picture, ringing, with a small phone badge in its corner. */
+.incoming-caller { position: relative; width: 96px; height: 96px; margin: 0 auto; }
+.avatar.incoming-avatar {
+  width: 96px;
+  height: 96px;
+  font-size: 2.2rem;
   animation: ring 1.2s ease-out infinite;
 }
-.ring-icon svg { width: 32px; height: 32px; animation: wiggle 1.2s ease-in-out infinite; }
+.ring-icon {
+  position: absolute;
+  right: -4px;
+  bottom: -4px;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 3px solid var(--bg-elev);
+  background: var(--success);
+  color: #fff;
+}
+.ring-icon svg { width: 18px; height: 18px; fill: currentColor; animation: wiggle 1.2s ease-in-out infinite; }
+
+/* Calling someone: their picture (replacing the camera icon) while it rings. */
+.avatar.stage-callee { width: 112px; height: 112px; font-size: 2.6rem; animation: ring 1.2s ease-out infinite; }
+.stage-callee[hidden] { display: none; }
+.stage-placeholder.has-callee::before { display: none; }
+.stage[data-state='in-call'] .stage-placeholder.has-callee { animation: none; }
 
 /* ---------- Toasts ---------- */
 #toasts {
