@@ -9,11 +9,11 @@ const LOCK_SVG =
 const LINK_SVG =
   '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10.6 13.4a1 1 0 0 1 0-1.4l3.5-3.5a1 1 0 1 1 1.4 1.4L12 13.4a1 1 0 0 1-1.4 0Zm-2.1 6.4a4.5 4.5 0 0 1-3.2-7.7l2.5-2.5a1 1 0 1 1 1.4 1.4l-2.5 2.5a2.5 2.5 0 0 0 3.5 3.5l2.5-2.5a1 1 0 0 1 1.4 1.4l-2.5 2.5a4.5 4.5 0 0 1-3.1 1.4Zm7.4-5.2a1 1 0 0 1-.7-1.7l2.5-2.5a2.5 2.5 0 0 0-3.5-3.5l-2.5 2.5a1 1 0 0 1-1.4-1.4l2.5-2.5a4.5 4.5 0 0 1 6.3 6.3l-2.5 2.5a1 1 0 0 1-.7.3Z"/></svg>';
 
-const VISIBILITY_LABELS: Record<RoomVisibility, string> = { public: 'Public', private: 'Private', link: 'Link only' };
+export const VISIBILITY_LABELS: Record<RoomVisibility, string> = { public: 'Public', private: 'Private', link: 'Link only' };
 const VISIBILITY_TITLES: Record<RoomVisibility, string> = {
   public: 'Public: everyone can see and join it',
   private: 'Private: only your friends can see and join it',
-  link: 'Link only: a permanent room (chat is kept) that people join through its invite link',
+  link: 'Link only: people join it through its invite link',
 };
 const NEXT_VISIBILITY: Record<RoomVisibility, RoomVisibility> = { public: 'private', private: 'link', link: 'public' };
 
@@ -22,6 +22,8 @@ export interface RoomsPanelEvents {
   onJoinCall(roomId: string): void;
   onShare(roomId: string): void;
   onLeave(roomId: string): void;
+  /** Our own room: see who's in it, remove or ban people. */
+  onMembers(roomId: string): void;
 }
 
 /** The Rooms directory: public rooms, friends' private rooms and our own; create rooms and set who sees them. */
@@ -108,8 +110,8 @@ export class RoomsPanel {
   }
 
   private remove(room: RoomSummary): void {
-    const extra = room.visibility === 'link' ? ' Its saved chat history and invite link stop working too.' : '';
-    if (!window.confirm(`Delete #${room.id}? Everyone in it is moved out and the room ID becomes free.${extra}`)) return;
+    const extra = room.visibility === 'link' ? ' Its invite link stops working too.' : '';
+    if (!window.confirm(`Delete #${room.id}? Everyone in it is moved out, its chat history is deleted and the room ID becomes free.${extra}`)) return;
     if (!this.socket.connected) {
       toast(NOT_CONNECTED, 'error');
       return;
@@ -169,6 +171,7 @@ export class RoomsPanel {
       );
       toggle.dataset.visibility = room.visibility;
       actions.unshift(toggle);
+      actions.push(this.button('Members', 'btn-ghost', `See who's in #${room.id}, remove or ban people`, () => this.events.onMembers(room.id)));
       actions.push(this.button('Delete', 'btn-ghost btn-delete', `Delete #${room.id} for everyone`, () => this.remove(room)));
     } else if (room.joined) {
       actions.push(this.button('Leave', 'btn-ghost btn-delete', `Leave #${room.id}`, () => this.events.onLeave(room.id)));

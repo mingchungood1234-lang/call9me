@@ -377,7 +377,11 @@ export class CallManager {
 
     this.socket.on('call:cancelled', ({ callId, reason }) => {
       if (this.info.state !== 'incoming' || callId !== this.info.callId) return;
-      this.events.onNotice(`Missed call from ${this.info.incomingFrom} (${reason}).`);
+      // Picked up or declined on another of our devices: not a missed call.
+      const elsewhere = reason.endsWith('on another device');
+      this.events.onNotice(
+        elsewhere ? `Call from ${this.info.incomingFrom} ${reason}.` : `Missed call from ${this.info.incomingFrom} (${reason}).`,
+      );
       this.cleanup();
     });
 

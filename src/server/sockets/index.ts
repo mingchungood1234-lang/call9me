@@ -10,12 +10,13 @@ import { sessionUserId } from '../middleware/session';
 import { callHistoryModel } from '../models/CallHistoryModel';
 import { MAX_AVATAR_BYTES } from '../../shared/validation';
 import { avatarModel } from '../models/AvatarModel';
-import { userModel } from '../models/UserModel';
+import { userChannel, userModel } from '../models/UserModel';
 import { decodeImage } from '../services/images';
 import { userStatusModel } from '../models/UserStatusModel';
 import { appVersion } from '../services/AppVersion';
 import { roomDirectory } from '../services/RoomDirectory';
 import { listDirectory } from '../services/UserDirectory';
+import { applyRateLimits } from './rateLimits';
 import type { AppServer } from './types';
 import { safeAck } from './util';
 
@@ -29,19 +30,22 @@ export function registerSocketHandlers(io: AppServer): void {
   CallController.signaling = signaling;
   roomDirectory.init(io);
 
-  // Handshake: the session cookie decides who this socket is; one connection per ID.
+  // Handshake: the session cookie decides who this socket is. An ID can be open on a few devices at once.
   io.use((socket, next) => {
     const userId = sessionUserId(socket.handshake.headers.cookie);
     if (!userId) return next(new Error(CONNECT_ERRORS.UNAUTHORIZED));
     const user = userModel.add(userId, socket.id);
-    if (!user) return next(new Error(CONNECT_ERRORS.ID_TAKEN));
+    if (!user) return next(new Error(CONNECT_ERRORS.TOO_MANY_DEVICES));
     socket.data.userId = user.id;
     next();
   });
 
   io.on('connection', (socket) => {
     const userId = socket.data.userId;
-    console.log(`[socket] ${userId} connected`);
+    const firstDevice = userModel.find(userId)?.sockets.size === 1;
+    console.log(`[socket] ${userId} connected (${userModel.find(userId)?.sockets.size ?? 0} device(s))`);
+    socket.join(userChannel(userId)); // everything sent "to this user" reaches all of their devices
+    applyRateLimits(socket);
 
     // Every (re)connect — including the reconnect after a deploy restarts the server —
     // tells the page which front-end build is current, so stale pages can update.
@@ -91,22 +95,26 @@ export function registerSocketHandlers(io: AppServer): void {
     });
     socket.on('client:visibility', (payload) => {
       const user = userModel.find(userId);
-      if (user && user.socketId === socket.id) user.visible = payload?.visible === true;
+      if (!user) return;
+      if (payload?.visible === true) user.visibleSockets.add(socket.id);
+      else user.visibleSockets.delete(socket.id);
     });
 
     // A call may be ringing for this user already (the app was opened from a call notification).
     const user = userModel.find(userId);
-    if (user) signaling.deliverPendingInvite(user);
-    signaling.broadcastUsers();
+    if (user) signaling.deliverPendingInvite(user, socket.id);
+    if (firstDevice) signaling.broadcastUsers(); // another device of someone online changes nothing for others
 
     socket.on('disconnect', () => {
       const user = userModel.find(userId);
-      if (user && user.socketId === socket.id) {
-        user.visible = false; // gone: notifications must reach the device again
-        signaling.handleDisconnect(user);
-        chat.handleDisconnect(userId);
-        userModel.remove(userId);
-        signaling.broadcastUsers();
+      if (user) {
+        // Forget this device first, so notifications reach the others again if it was the visible one.
+        const wasLast = userModel.removeSocket(userId, socket.id);
+        signaling.handleDisconnect(user, socket.id, wasLast);
+        if (wasLast) {
+          chat.handleDisconnect(userId);
+          signaling.broadcastUsers();
+        }
       }
       console.log(`[socket] ${userId} disconnected`);
     });

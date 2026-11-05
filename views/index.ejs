@@ -56,6 +56,19 @@
 
       <button type="submit" id="enter-btn" class="btn btn-primary btn-block">Continue</button>
     </form>
+    <!-- Sign in with a QR code: approved from a device that's already signed in -->
+    <div id="qr-signin" class="qr-signin">
+      <button type="button" id="qr-btn" class="btn btn-secondary btn-block">Sign in with a QR code</button>
+      <div id="qr-panel" class="qr-panel" hidden>
+        <div id="qr-code" class="qr-code" role="img" aria-label="QR code for signing in"></div>
+        <p id="qr-code-text" class="qr-code-text" aria-label="Sign-in code"></p>
+        <p id="qr-hint" class="hint" data-state="neutral" aria-live="polite">
+          On a phone or computer where you're signed in, open your profile menu → <strong>Sign in another device</strong>,
+          then scan this code or type it in.
+        </p>
+        <button type="button" id="qr-cancel" class="btn btn-ghost btn-block">Use ID and PIN instead</button>
+      </div>
+    </div>
     <% } %>
 
     <% if (error) { %>

@@ -1,11 +1,10 @@
 import type { Request, Response } from 'express';
 import type { LoginResponse } from '../../shared/types';
 import { isValidPin, isValidUserId, PIN_RULES, USER_ID_RULES } from '../../shared/validation';
-import { requestUserId, SESSION_COOKIE, sessionTokenFrom, setSessionCookie } from '../middleware/session';
+import { SESSION_COOKIE, sessionTokenFrom, setSessionCookie } from '../middleware/session';
 import { accountModel } from '../models/AccountModel';
-import { roomModel } from '../models/RoomModel';
 import { sessionModel } from '../models/SessionModel';
-import { userModel } from '../models/UserModel';
+import { allowRequest, clientIp, httpLimits } from '../services/RateLimiter';
 
 export class AuthController {
   /** POST /api/login { id, pin } — signs in, or registers the ID on first use. */
@@ -19,14 +18,13 @@ export class AuthController {
       res.status(400).json({ ok: false, error: PIN_RULES });
       return;
     }
+    const ip = clientIp(req);
+    if (!allowRequest(res, httpLimits.login, ip)) return;
+    if (!accountModel.exists(id) && !allowRequest(res, httpLimits.signup, ip)) return;
 
     const result = await accountModel.login(id, pin);
     if (!result.ok) {
       res.status(401).json(result);
-      return;
-    }
-    if (userModel.isTaken(result.id)) {
-      res.status(409).json({ ok: false, error: 'This ID is already signed in on another tab or device.' });
       return;
     }
 
@@ -35,10 +33,11 @@ export class AuthController {
     res.json({ ok: true, userId: result.id, created: result.created });
   }
 
-  /** POST /api/logout — also stops chat notifications for rooms this user followed. */
+  /**
+   * POST /api/logout. Joined rooms stay joined; the app removes this device's push
+   * subscription first, so its notifications stop anyway.
+   */
   static logout(req: Request, res: Response): void {
-    const userId = requestUserId(req);
-    if (userId) roomModel.unfollowAll(userId);
     sessionModel.destroy(sessionTokenFrom(req.headers.cookie));
     res.clearCookie(SESSION_COOKIE, { path: '/' });
     res.json({ ok: true });

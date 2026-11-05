@@ -292,6 +292,7 @@ input:disabled { opacity: 0.5; }
 .menu-link { display: grid; padding: 9px 10px; border-radius: 10px; color: var(--text); font-weight: 500; text-decoration: none; }
 .menu-link:hover { background: var(--bg-hover); }
 .menu-link small { color: var(--muted); font-weight: 400; font-size: 0.75rem; }
+button.menu-link { width: 100%; border: 0; background: none; text-align: left; font: inherit; font-weight: 500; cursor: pointer; }
 
 /* ==========================================================================
    Landing
@@ -364,6 +365,16 @@ body.landing {
 .btn-google svg { width: 20px; height: 20px; }
 .or-divider { display: flex; align-items: center; gap: 10px; margin: 16px 0 4px; color: var(--muted); font-size: 0.8rem; }
 .or-divider::before, .or-divider::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+
+/* Sign in with a QR code */
+.qr-signin { margin-top: 12px; }
+.qr-panel { display: grid; gap: 8px; justify-items: center; text-align: center; }
+.qr-panel[hidden] { display: none; }
+/* Always dark on white: cameras can't read a dark-mode code. */
+.qr-code { width: min(240px, 70vw); aspect-ratio: 1; border-radius: 14px; overflow: hidden; background: #fff; box-shadow: var(--shadow-lg); transition: opacity 0.2s; }
+.qr-code svg { display: block; width: 100%; height: 100%; }
+.qr-code.is-expired { opacity: 0.25; }
+.qr-code-text { margin: 4px 0 0; font: 700 1.35rem/1.2 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; letter-spacing: 0.12em; }
 .google-form { margin-top: 20px; text-align: left; }
 .google-signed { margin: 0 0 14px; font-size: 0.9rem; color: var(--muted); text-align: center; }
 .google-signed strong { color: var(--text); }
@@ -728,6 +739,24 @@ body.app .update-banner { bottom: calc(var(--tabbar-h) + 12px + env(safe-area-in
 .share-copy-status[data-state='ok'] { color: var(--success); }
 .share-copy-status[data-state='error'] { color: var(--error-text); }
 .share-dialog .dialog-actions { margin-top: 8px; }
+
+/* ---------- Join preview, room options, room members ---------- */
+.join-meta { margin: 0; font-size: 0.85rem; color: var(--muted); }
+.join-note { margin: 0; font-size: 0.82rem; color: var(--muted); }
+.join-messages { list-style: none; margin: 0; padding: 8px 10px; max-height: 260px; overflow-y: auto; display: grid; gap: 6px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-2); }
+.join-messages[hidden] { display: none; }
+.join-message { display: flex; gap: 6px; align-items: baseline; min-width: 0; font-size: 0.85rem; }
+.join-message-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.join-message time { flex: none; font-size: 0.72rem; color: var(--muted); }
+.room-actions-list { display: grid; gap: 8px; }
+.room-actions-list .btn { justify-content: flex-start; min-height: 44px; }
+.link-step { display: grid; gap: 8px; }
+.link-step[hidden] { display: none; }
+.link-camera { position: relative; aspect-ratio: 1; border-radius: 14px; overflow: hidden; background: #000; }
+.link-video { width: 100%; height: 100%; object-fit: cover; }
+.link-confirm { margin: 0; line-height: 1.45; }
+.link-warning { color: var(--error-text); }
+.link-dialog input { text-transform: uppercase; letter-spacing: 0.08em; }
 
 /* ---------- Invites from friends ("X shared #room with you") ---------- */
 .invite-stack {
@@ -1209,6 +1238,13 @@ body.in-call .call-status { background: var(--primary-soft); color: var(--primar
   font-weight: 700;
   text-align: center;
 }
+.chat-item.is-muted .chat-unread { background: var(--muted); }
+.chat-flag { flex: none; font-size: 0.75rem; line-height: 1; }
+.chat-item-more { flex: none; opacity: 0.6; }
+.chat-item:hover .chat-item-more, .chat-item-more:focus-visible { opacity: 1; }
+.chat-archived { list-style: none; }
+.chat-archived-toggle { display: block; width: 100%; margin-top: 6px; border: 0; background: none; text-align: left; cursor: pointer; font-family: inherit; }
+.chat-archived-toggle:hover { color: var(--text); }
 .chat-back { font-size: 1.1rem; }
 .room-header #room-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chat-readonly {

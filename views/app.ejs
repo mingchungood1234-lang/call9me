@@ -58,8 +58,9 @@
           <button type="button" role="radio" data-text="normal" aria-checked="true">Normal text</button>
           <button type="button" role="radio" data-text="large" aria-checked="false">Large text</button>
         </div>
-        <% if (googleEnabled) { %>
         <p class="menu-heading">Account</p>
+        <button id="link-device-btn" class="menu-link" type="button" role="menuitem">Sign in another device<small>Scan the QR code it shows, or type its code</small></button>
+        <% if (googleEnabled) { %>
         <% if (googleEmail) { %>
         <p class="menu-note">Google: <strong><%= googleEmail %></strong></p>
         <% } else { %>
@@ -241,6 +242,7 @@
         <span class="room-header-actions">
           <button id="share-room-btn" class="btn btn-secondary btn-small" type="button" hidden>Share</button>
           <button id="leave-room-btn" class="btn btn-ghost btn-small" type="button" hidden>Leave room</button>
+          <button id="room-more-btn" class="btn btn-ghost btn-small icon-only" type="button" aria-label="Room options" title="Pin, mute or archive">⋯</button>
         </span>
       </div>
       <div id="room-members" class="room-members"></div>

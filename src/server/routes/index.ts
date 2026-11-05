@@ -5,6 +5,7 @@ import { AuthController } from '../controllers/AuthController';
 import { CallController } from '../controllers/CallController';
 import { GoogleAuthController } from '../controllers/GoogleAuthController';
 import { PageController } from '../controllers/PageController';
+import { PairingController } from '../controllers/PairingController';
 import { PushController } from '../controllers/PushController';
 import { UserController } from '../controllers/UserController';
 import { appVersion } from '../services/AppVersion';
@@ -29,6 +30,10 @@ router.get('/auth/google/callback', GoogleAuthController.callback);
 router.post('/api/login', AuthController.login);
 router.post('/api/google/complete', GoogleAuthController.complete);
 router.post('/api/logout', AuthController.logout);
+router.post('/api/pair/start', PairingController.start);
+router.get('/api/pair/status', PairingController.status);
+router.post('/api/pair/info', PairingController.info);
+router.post('/api/pair/approve', PairingController.approve);
 router.get('/api/version', (_req, res) => {
   res.set('Cache-Control', 'no-store');
   res.json({ version: appVersion() });

@@ -32,7 +32,7 @@ export class FriendController {
       ack({ ok: true, to, accepted: false });
       this.sendState(me, to);
       const target = userModel.find(to);
-      if (target) this.io.to(target.socketId).emit('friends:requested', { from: me });
+      if (target) this.io.to(target.channel).emit('friends:requested', { from: me });
       pushService.notify(to, {
         type: 'friend',
         title: 'Friend request',
@@ -90,7 +90,7 @@ export class FriendController {
   private sendState(...userIds: string[]): void {
     for (const id of userIds) {
       const user = userModel.find(id);
-      if (user) this.io.to(user.socketId).emit('friends:update', friendModel.state(user.id));
+      if (user) this.io.to(user.channel).emit('friends:update', friendModel.state(user.id));
     }
   }
 }

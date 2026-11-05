@@ -23,27 +23,37 @@ export class RoomDirectory {
 
   init(io: AppServer): void {
     this.io = io;
-    // "link" rooms and the Public chat are permanent: their chat history is kept on disk.
-    roomModel.isPermanent = (roomId) => roomId === PUBLIC_ROOM_ID || roomSettingsModel.get(roomId)?.visibility === 'link';
+    // Every room (and the Public chat) keeps its chat history on disk until it's deleted.
+    roomModel.isPermanent = (roomId) => roomId === PUBLIC_ROOM_ID || roomSettingsModel.get(roomId) !== undefined;
   }
 
-  /** Listed for (and free to join): everyone if public; the owner, members (shared with / joined by link) and, if private, the owner's friends. */
+  /**
+   * Listed for (and free to join): everyone if public; the owner, members (anyone who
+   * joined it, was shared it or used its link) and, if private, the owner's friends.
+   */
   canSee(settings: RoomSettings, userId: string): boolean {
-    if (settings.visibility === 'public' || same(settings.owner, userId)) return true;
-    if (roomSettingsModel.isMember(settings, userId)) return true;
+    if (same(settings.owner, userId)) return true;
+    if (roomSettingsModel.isBanned(settings, userId)) return false;
+    if (settings.visibility === 'public') return true;
+    // Followers too: people who joined before memberships were recorded for every room.
+    if (roomSettingsModel.isMember(settings, userId) || roomModel.isFollower(settings.id, userId)) return true;
     return settings.visibility === 'private' && friendModel.areFriends(settings.owner, userId);
   }
 
   /**
    * @returns null if `userId` may enter the room (chat or call), else why not. The right
-   * `key` (from an invite link) lets anyone into a "link" room and makes them a member.
+   * `key` (from an invite link) lets anyone not banned into a "link" room and, if `admit`,
+   * makes them a member (a preview only checks).
    */
-  denyReason(roomId: string, userId: string, key?: unknown): string | null {
+  denyReason(roomId: string, userId: string, key?: unknown, admit = true): string | null {
     const settings = roomSettingsModel.get(roomId);
     if (!settings || this.canSee(settings, userId)) return null;
+    if (roomSettingsModel.isBanned(settings, userId)) return `${settings.owner} removed you from #${settings.id}.`;
     if (settings.visibility === 'link' && settings.key && key === settings.key) {
-      roomSettingsModel.addMember(settings, userId);
-      this.changed();
+      if (admit) {
+        roomSettingsModel.addMember(settings, userId);
+        this.changed();
+      }
       return null;
     }
     // Already inside (e.g. it was made private after they joined), or called into it.
@@ -89,13 +99,13 @@ export class RoomDirectory {
       .all()
       .filter((s) => this.canSee(s, userId))
       .map((s) => this.summary(s, userId))
-      .filter((r) => r.online.length > 0 || r.followers > 0 || r.visibility === 'link' || same(r.owner, userId))
+      .filter((r) => r.online.length > 0 || r.followers > 0 || r.visibility === 'link' || same(r.owner, userId) || r.joined)
       .sort((a, b) => b.online.length - a.online.length || b.followers - a.followers || a.id.localeCompare(b.id));
   }
 
   sendTo(userId: string): void {
     const user = userModel.find(userId);
-    if (user && this.io) this.io.to(user.socketId).emit('rooms:update', this.listFor(user.id));
+    if (user && this.io) this.io.to(user.channel).emit('rooms:update', this.listFor(user.id));
   }
 
   /** Re-sends everyone their list soon (bursts of joins/leaves are coalesced). */

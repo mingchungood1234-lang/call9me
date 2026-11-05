@@ -81,7 +81,7 @@ export class PushService {
    * iOS cancels the subscription after a few "silent" pushes.
    */
   notify(userId: string, payload: PushPayload, { throttleMs = 0 }: NotifyOptions = {}): void {
-    if (userModel.find(userId)?.visible) return;
+    if (userModel.isVisible(userId)) return;
     if (userStatusModel.get(userId) === 'dnd') return; // Do not disturb: no notifications at all
     const subscriptions = pushSubscriptionModel.forUser(userId);
     if (subscriptions.length === 0) return;

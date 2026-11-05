@@ -7,7 +7,7 @@ import { googleEnabled, pendingGoogleFor, suggestId } from './GoogleAuthControll
 
 const ERROR_MESSAGES: Record<string, string> = {
   session: 'Please sign in to continue.',
-  taken: 'This ID is already open in another tab or device.',
+  devices: 'This ID is already open on too many devices. Close it on one of them, or sign out there.',
   google: 'Google sign-in did not complete. Please try again.',
   'google-off': 'Google sign-in is not set up on this server.',
 };

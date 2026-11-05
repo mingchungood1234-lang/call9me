@@ -14,6 +14,7 @@ import type { AppServer, AppSocket } from '../sockets/types';
 import { safeAck } from '../sockets/util';
 
 const MAX_SDP_LENGTH = 100_000;
+const ON_OTHER_DEVICE = "You're in a call on another device. Hang up there first.";
 
 function isSessionDescription(value: unknown, type: SessionDescription['type']): value is SessionDescription {
   const v = value as SessionDescription | undefined;
@@ -52,6 +53,10 @@ function callPush(call: Call, from: string): PushPayload {
  * Calls hold participants and pending invites. When someone accepts, they send an
  * offer to every existing participant; offers/answers/ICE are relayed only between
  * members of the same call. The server never touches media.
+ *
+ * A user may be signed in on several devices: an invite rings all of them, and the one
+ * that answers (or starts the call) is the user's call device — everything about the
+ * call goes only there, and only it can act in the call.
  */
 export class SignalingController {
   /** "callId|userId" → ring timeout */
@@ -60,60 +65,66 @@ export class SignalingController {
   constructor(private readonly io: AppServer) {
     callHistory.onEntry = (userId, entry) => {
       const user = userModel.find(userId);
-      if (user) this.io.to(user.socketId).emit('history:new', entry);
+      if (user) this.io.to(user.channel).emit('history:new', entry);
     };
   }
 
   register(socket: AppSocket): void {
     const me = () => userModel.find(socket.data.userId);
+    /** Us, if this device is the one in our call. */
+    const inCallHere = () => {
+      const user = me();
+      return user?.callId && user.callSocketId === socket.id ? user : undefined;
+    };
 
-    socket.on('call:invite', (payload, ack) => this.invite(me(), payload, safeAck(ack)));
-    socket.on('call:join-room', (payload, ack) => this.joinRoom(me(), payload, safeAck(ack)));
+    socket.on('call:invite', (payload, ack) => this.invite(me(), socket.id, payload, safeAck(ack)));
+    socket.on('call:join-room', (payload, ack) => this.joinRoom(me(), socket.id, payload, safeAck(ack)));
     socket.on('call:accept', (payload, ack) =>
-      this.accept(me(), payload?.callId, payload?.video !== false, safeAck(ack)),
+      this.accept(me(), socket.id, payload?.callId, payload?.video !== false, safeAck(ack)),
     );
     socket.on('call:reject', (payload) => {
       const user = me();
       const reason = typeof payload?.reason === 'string' ? payload.reason.slice(0, 100) : 'declined';
-      if (user) this.declineInvite(user.id, payload?.callId, reason);
+      if (user) this.declineInvite(user.id, payload?.callId, reason, socket.id);
     });
-    socket.on('call:leave', () => this.leave(me(), 'left'));
+    socket.on('call:leave', () => this.leave(inCallHere(), 'left'));
     socket.on('call:screen', (payload) => {
-      const user = me();
+      const user = inCallHere();
       const call = user && callModel.get(user.callId);
       if (!user || !call) return;
       const sharing = payload?.sharing === true;
-      this.eachParticipant(call, (p) => this.io.to(p.socketId).emit('call:screen', { from: user.id, sharing }), user.id);
+      this.eachParticipant(call, (p) => this.io.to(userModel.callTarget(p)).emit('call:screen', { from: user.id, sharing }), user.id);
     });
     socket.on('call:camera', (payload) => {
-      const user = me();
+      const user = inCallHere();
       const call = user && callModel.get(user.callId);
       if (!user || !call) return;
       const on = payload?.on === true;
-      this.eachParticipant(call, (p) => this.io.to(p.socketId).emit('call:camera', { from: user.id, on }), user.id);
+      this.eachParticipant(call, (p) => this.io.to(userModel.callTarget(p)).emit('call:camera', { from: user.id, on }), user.id);
     });
 
     socket.on('webrtc:offer', (payload) => {
       if (!isSessionDescription(payload?.sdp, 'offer')) return;
-      this.relay(me(), payload.to, (to, from) => this.io.to(to.socketId).emit('webrtc:offer', { from, sdp: payload.sdp }));
+      this.relay(inCallHere(), payload.to, (to, from) => this.io.to(to).emit('webrtc:offer', { from, sdp: payload.sdp }));
     });
     socket.on('webrtc:answer', (payload) => {
       if (!isSessionDescription(payload?.sdp, 'answer')) return;
-      this.relay(me(), payload.to, (to, from) => this.io.to(to.socketId).emit('webrtc:answer', { from, sdp: payload.sdp }));
+      this.relay(inCallHere(), payload.to, (to, from) => this.io.to(to).emit('webrtc:answer', { from, sdp: payload.sdp }));
     });
     socket.on('webrtc:ice', (payload) => {
       if (!isIceCandidate(payload?.candidate)) return;
-      this.relay(me(), payload.to, (to, from) =>
-        this.io.to(to.socketId).emit('webrtc:ice', { from, candidate: payload.candidate }),
-      );
+      this.relay(inCallHere(), payload.to, (to, from) => this.io.to(to).emit('webrtc:ice', { from, candidate: payload.candidate }));
     });
   }
 
   /**
-   * Leaves any call when a user disconnects. A ringing invite keeps ringing via push
-   * if the user has notifications on (phone locked / app closed); otherwise it's declined.
+   * One of the user's devices disconnected: if it was the one in a call, they leave the
+   * call. Once their last device is gone, a ringing invite keeps ringing via push if they
+   * have notifications on (phone locked / app closed); otherwise it's declined.
    */
-  handleDisconnect(user: OnlineUser): void {
+  handleDisconnect(user: OnlineUser, socketId: string, wasLastDevice: boolean): void {
+    if (user.callSocketId === socketId) this.leave(user, 'disconnected');
+    if (!wasLastDevice) return;
     if (user.invitedTo) {
       const call = callModel.get(user.invitedTo);
       const invite = call?.invited.get(user.id);
@@ -124,16 +135,15 @@ export class SignalingController {
         this.declineInvite(user.id, user.invitedTo, 'disconnected');
       }
     }
-    this.leave(user, 'disconnected');
   }
 
-  /** On (re)connect, hand the app any call still ringing for this user — e.g. opened from a call notification. */
-  deliverPendingInvite(user: OnlineUser): void {
+  /** On (re)connect, hand this device any call still ringing for this user — e.g. opened from a call notification. */
+  deliverPendingInvite(user: OnlineUser, socketId: string): void {
     const call = callModel.findInviteFor(user.id);
     const invite = call?.invited.get(user.id);
     if (!call || !invite) return;
     user.invitedTo = call.id;
-    this.io.to(user.socketId).emit('call:incoming', {
+    this.io.to(socketId).emit('call:incoming', {
       callId: call.id,
       roomId: call.roomId,
       from: invite.by,
@@ -144,20 +154,25 @@ export class SignalingController {
 
   /**
    * Declines a ringing invite. Works for offline users too (the notification's Decline
-   * button calls this over HTTP). @returns whether there was an invite to decline.
+   * button calls this over HTTP). Their other devices stop ringing; `fromSocketId` is the
+   * device that declined. @returns whether there was an invite to decline.
    */
-  declineInvite(userId: string, callId: unknown, reason: string): boolean {
+  declineInvite(userId: string, callId: unknown, reason: string, fromSocketId?: string): boolean {
     if (typeof callId !== 'string') return false;
     const user = userModel.find(userId);
     if (user?.invitedTo === callId) user.invitedTo = null;
 
     const call = callModel.get(callId);
     if (!call?.invited.delete(userId)) return false;
+    if (user) {
+      const others = fromSocketId ? this.io.to(user.channel).except(fromSocketId) : this.io.to(user.channel);
+      others.emit('call:cancelled', { callId, reason: `${reason} on another device` });
+    }
     this.clearInviteTimer(callId, userId);
     if (reason === 'declined') callHistory.declined(call, userId);
     callHistory.finish(callId, userId, reason === 'declined' ? 'declined' : 'missed');
 
-    this.eachParticipant(call, (p) => this.io.to(p.socketId).emit('call:rejected', { callId, from: userId, reason }));
+    this.eachParticipant(call, (p) => this.io.to(userModel.callTarget(p)).emit('call:rejected', { callId, from: userId, reason }));
     if (!this.endIfEmpty(call)) this.emitUpdate(call);
     this.broadcastUsers();
     return true;
@@ -173,11 +188,13 @@ export class SignalingController {
 
   private invite(
     caller: OnlineUser | undefined,
+    socketId: string,
     payload: { to: string; video: boolean },
     ack: Ack<{ callId: string; to: string; offline: boolean }>,
   ): void {
     if (!caller) return ack({ ok: false, error: 'Not registered' });
     if (caller.invitedTo) return ack({ ok: false, error: 'Answer or decline your incoming call first' });
+    if (caller.callId && caller.callSocketId !== socketId) return ack({ ok: false, error: ON_OTHER_DEVICE });
 
     const targetId = typeof payload?.to === 'string' ? payload.to : '';
     const target = userModel.find(targetId);
@@ -202,6 +219,7 @@ export class SignalingController {
     if (!call) {
       call = callModel.create(caller.id, payload.video !== false);
       caller.callId = call.id;
+      caller.callSocketId = socketId;
     }
     call.invited.set(calleeId, { by: caller.id, at: Date.now() });
     callHistory.dial(call, caller.id, calleeId, payload.video !== false);
@@ -214,7 +232,7 @@ export class SignalingController {
 
     if (target) {
       target.invitedTo = call.id;
-      this.io.to(target.socketId).emit('call:incoming', {
+      this.io.to(target.channel).emit('call:incoming', {
         callId,
         roomId: call.roomId,
         from: caller.id,
@@ -234,13 +252,14 @@ export class SignalingController {
   /** Joins the call room with this ID, opening it if nobody is there yet. */
   private joinRoom(
     user: OnlineUser | undefined,
+    socketId: string,
     payload: { roomId: string; video: boolean; key?: string },
     ack: Ack<{ callId: string; roomId: string; participants: string[]; video: boolean }>,
   ): void {
     if (!user) return ack({ ok: false, error: 'Not registered' });
     if (!isValidRoomId(payload?.roomId)) return ack({ ok: false, error: `Invalid room ID. ${ROOM_ID_RULES}` });
     if (user.invitedTo) return ack({ ok: false, error: 'Answer or decline your incoming call first' });
-    if (user.callId) return ack({ ok: false, error: 'Leave your current call first' });
+    if (user.callId) return ack({ ok: false, error: user.callSocketId === socketId ? 'Leave your current call first' : ON_OTHER_DEVICE });
 
     if (payload.roomId.toLowerCase() === PUBLIC_ROOM_ID) {
       return ack({ ok: false, error: 'The Public chat has no call. Use another room ID.' });
@@ -259,10 +278,11 @@ export class SignalingController {
     if (call) call.participants.add(user.id);
     else call = callModel.create(user.id, video, payload.roomId);
     user.callId = call.id;
+    user.callSocketId = socketId;
     callHistory.join(call, user.id, video);
 
     const callId = call.id;
-    this.eachParticipant(call, (p) => this.io.to(p.socketId).emit('call:peer-joined', { callId, userId: user.id }), user.id);
+    this.eachParticipant(call, (p) => this.io.to(userModel.callTarget(p)).emit('call:peer-joined', { callId, userId: user.id }), user.id);
     // Like accepting an invite: the newcomer sends an offer to each existing participant.
     ack({ ok: true, callId, roomId: call.roomId!, participants: existing, video: call.video });
     this.emitUpdate(call);
@@ -271,6 +291,7 @@ export class SignalingController {
 
   private accept(
     user: OnlineUser | undefined,
+    socketId: string,
     callId: unknown,
     video: boolean,
     ack: Ack<{ callId: string; participants: string[]; video: boolean }>,
@@ -290,9 +311,12 @@ export class SignalingController {
     const existing = [...call.participants];
     call.participants.add(user.id);
     user.callId = call.id;
+    user.callSocketId = socketId;
     callHistory.join(call, user.id, video);
+    // Our other devices stop ringing.
+    this.io.to(user.channel).except(socketId).emit('call:cancelled', { callId, reason: 'answered on another device' });
 
-    this.eachParticipant(call, (p) => this.io.to(p.socketId).emit('call:peer-joined', { callId, userId: user.id }), user.id);
+    this.eachParticipant(call, (p) => this.io.to(userModel.callTarget(p)).emit('call:peer-joined', { callId, userId: user.id }), user.id);
     // The newcomer sends an offer to each existing participant.
     ack({ ok: true, callId, participants: existing, video: call.video });
     this.emitUpdate(call);
@@ -310,10 +334,10 @@ export class SignalingController {
     const user = userModel.find(userId);
     if (user && user.invitedTo === callId) {
       user.invitedTo = null;
-      this.io.to(user.socketId).emit('call:cancelled', { callId, reason: 'no answer' });
+      this.io.to(user.channel).emit('call:cancelled', { callId, reason: 'no answer' });
     }
     pushService.notify(userId, missedCallPush(invite.by));
-    this.eachParticipant(call, (p) => this.io.to(p.socketId).emit('call:rejected', { callId, from: userId, reason: 'no answer' }));
+    this.eachParticipant(call, (p) => this.io.to(userModel.callTarget(p)).emit('call:rejected', { callId, from: userId, reason: 'no answer' }));
 
     if (!this.endIfEmpty(call)) this.emitUpdate(call);
     this.broadcastUsers();
@@ -323,11 +347,12 @@ export class SignalingController {
     if (!user?.callId) return;
     const call = callModel.get(user.callId);
     user.callId = null;
+    user.callSocketId = null;
     if (call) {
       call.participants.delete(user.id);
       callHistory.finish(call.id, user.id, 'cancelled');
       this.eachParticipant(call, (p) =>
-        this.io.to(p.socketId).emit('call:peer-left', { callId: call.id, userId: user.id, reason }),
+        this.io.to(userModel.callTarget(p)).emit('call:peer-left', { callId: call.id, userId: user.id, reason }),
       );
       if (!this.endIfEmpty(call)) this.emitUpdate(call);
     }
@@ -346,8 +371,9 @@ export class SignalingController {
 
     for (const id of call.participants) callHistory.finish(call.id, id, 'unanswered');
     this.eachParticipant(call, (p) => {
+      this.io.to(userModel.callTarget(p)).emit('call:ended', { callId: call.id, reason: 'everyone else left' });
       p.callId = null;
-      this.io.to(p.socketId).emit('call:ended', { callId: call.id, reason: 'everyone else left' });
+      p.callSocketId = null;
     });
     for (const [userId, invite] of call.invited) {
       this.clearInviteTimer(call.id, userId);
@@ -355,7 +381,7 @@ export class SignalingController {
       const user = userModel.find(userId);
       if (user && user.invitedTo === call.id) {
         user.invitedTo = null;
-        this.io.to(user.socketId).emit('call:cancelled', { callId: call.id, reason: 'caller hung up' });
+        this.io.to(user.channel).emit('call:cancelled', { callId: call.id, reason: 'caller hung up' });
       }
       pushService.notify(userId, missedCallPush(invite.by));
     }
@@ -365,10 +391,11 @@ export class SignalingController {
 
   // ---- Helpers ----
 
-  private relay(sender: OnlineUser | undefined, to: unknown, send: (target: OnlineUser, from: string) => void): void {
+  /** Passes signaling to `to`'s call device, if they're in the sender's call. */
+  private relay(sender: OnlineUser | undefined, to: unknown, send: (target: string, from: string) => void): void {
     if (!sender?.callId || typeof to !== 'string') return;
     const target = userModel.find(to);
-    if (target && target.id !== sender.id && target.callId === sender.callId) send(target, sender.id);
+    if (target && target.id !== sender.id && target.callId === sender.callId) send(userModel.callTarget(target), sender.id);
   }
 
   private eachParticipant(call: Call, fn: (user: OnlineUser) => void, exceptId?: string): void {
@@ -387,7 +414,7 @@ export class SignalingController {
       invited: [...call.invited.keys()],
       video: call.video,
     };
-    this.eachParticipant(call, (p) => this.io.to(p.socketId).emit('call:update', state));
+    this.eachParticipant(call, (p) => this.io.to(userModel.callTarget(p)).emit('call:update', state));
   }
 
   private clearInviteTimer(callId: string, userId: string): void {

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import type { ChatMessage } from '../../shared/types';
+import type { ChatMessage, RoomPrefs } from '../../shared/types';
 import { config } from '../config';
 
 interface Room {
@@ -15,8 +15,9 @@ interface Room {
  *
  * Members are users connected to a room right now. Followers are users who joined a
  * room and haven't left it on purpose — they keep getting push notifications for it
- * while their app is closed. Followers are persisted; rooms and messages are in memory.
- * A room's history is discarded once nobody is in it and nobody follows it.
+ * while their app is closed. Followers, read marks and each user's room preferences are
+ * persisted; so is the chat history of permanent rooms (see `isPermanent`). Rooms are
+ * dropped from memory once nobody is in them and nobody follows them.
  */
 export class RoomModel {
   private readonly rooms = new Map<string, Room>();
@@ -35,13 +36,20 @@ export class RoomModel {
   private readsTimer: NodeJS.Timeout | null = null;
   private readonly readsFile: string;
 
+  /** "user|room" → their pinned / muted / archived choices */
+  private readonly prefs = new Map<string, RoomPrefs>();
+  private prefsTimer: NodeJS.Timeout | null = null;
+  private readonly prefsFile: string;
+
   constructor(
     private readonly followersFile: string,
     private readonly historyDir: string,
   ) {
     this.readsFile = path.join(path.dirname(followersFile), 'room-reads.json');
+    this.prefsFile = path.join(path.dirname(followersFile), 'room-prefs.json');
     this.loadFollowers();
     this.loadReads();
+    this.loadPrefs();
   }
 
   normalize(roomId: string): string {
@@ -64,7 +72,7 @@ export class RoomModel {
     const room = this.rooms.get(id);
     if (!room) return;
     room.members.delete(userId);
-    this.dropIfAbandoned(id);
+    this.release(id);
   }
 
   isMember(roomId: string, userId: string): boolean {
@@ -123,6 +131,59 @@ export class RoomModel {
     return this.messagesOf(roomId).filter((m) => !m.system && m.timestamp > since && m.from.toLowerCase() !== me).length;
   }
 
+  // ---- Each user's preferences per room ----
+
+  prefsOf(userId: string, roomId: string): RoomPrefs {
+    return { ...this.prefs.get(this.readKey(userId, roomId)) };
+  }
+
+  /** Merges `changes` into their preferences for the room (false values are dropped). */
+  setPrefs(userId: string, roomId: string, changes: RoomPrefs): RoomPrefs {
+    const key = this.readKey(userId, roomId);
+    const next: RoomPrefs = { ...this.prefs.get(key) };
+    for (const name of ['pinned', 'muted', 'archived'] as const) {
+      if (changes[name] === undefined) continue;
+      if (changes[name]) next[name] = true;
+      else delete next[name];
+    }
+    if (Object.keys(next).length) this.prefs.set(key, next);
+    else this.prefs.delete(key);
+    this.schedulePrefs();
+    return { ...next };
+  }
+
+  isMuted(userId: string, roomId: string): boolean {
+    return this.prefs.get(this.readKey(userId, roomId))?.muted ?? false;
+  }
+
+  private clearPrefs(userId: string, roomId: string): void {
+    if (this.prefs.delete(this.readKey(userId, roomId))) this.schedulePrefs();
+  }
+
+  private loadPrefs(): void {
+    try {
+      const data: Record<string, RoomPrefs> = JSON.parse(fs.readFileSync(this.prefsFile, 'utf8'));
+      for (const [key, prefs] of Object.entries(data)) this.prefs.set(key, prefs);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') console.warn(`[rooms] could not read ${this.prefsFile}:`, err);
+    }
+  }
+
+  private schedulePrefs(): void {
+    if (this.prefsTimer) return;
+    this.prefsTimer = setTimeout(() => {
+      this.prefsTimer = null;
+      try {
+        fs.mkdirSync(path.dirname(this.prefsFile), { recursive: true });
+        const tmp = `${this.prefsFile}.tmp`;
+        fs.writeFileSync(tmp, JSON.stringify(Object.fromEntries(this.prefs)));
+        fs.renameSync(tmp, this.prefsFile);
+      } catch (err) {
+        console.warn('[rooms] could not save room preferences:', err);
+      }
+    }, 1000);
+  }
+
   private loadReads(): void {
     try {
       const data: Record<string, number> = JSON.parse(fs.readFileSync(this.readsFile, 'utf8'));
@@ -152,6 +213,7 @@ export class RoomModel {
     const id = this.normalize(roomId);
     const message: ChatMessage = { id: randomUUID(), roomId: id, from, text, timestamp: Date.now(), system };
     if (sticker) message.sticker = sticker;
+    this.messagesOf(id); // loads a permanent room's saved history if nobody has it open
     const room = this.rooms.get(id);
     if (room) {
       room.messages.push(message);
@@ -166,6 +228,8 @@ export class RoomModel {
     const id = this.normalize(roomId);
     this.rooms.delete(id);
     if (this.followers.delete(id)) this.schedulePersist();
+    for (const key of [...this.prefs.keys()]) if (key.endsWith(`|${id}`)) this.prefs.delete(key);
+    this.schedulePrefs();
     this.pendingHistory.delete(id);
     fs.rmSync(this.historyFile(id), { force: true });
   }
@@ -226,20 +290,18 @@ export class RoomModel {
     const set = this.followers.get(id);
     if (!set?.delete(userId)) return;
     if (set.size === 0) this.followers.delete(id);
-    this.dropIfAbandoned(id);
+    this.clearPrefs(userId, id);
+    this.release(id);
     this.schedulePersist();
-  }
-
-  /** On sign-out: stop all chat notifications for this user. */
-  unfollowAll(userId: string): void {
-    for (const roomId of [...this.followers.keys()]) this.unfollow(roomId, userId);
   }
 
   followersOf(roomId: string): string[] {
     return [...(this.followers.get(this.normalize(roomId)) ?? [])];
   }
 
-  private dropIfAbandoned(id: string): void {
+  /** Drops the room from memory if nobody is in it or follows it (its saved history stays on disk). */
+  release(roomId: string): void {
+    const id = this.normalize(roomId);
     const room = this.rooms.get(id);
     if (room && room.members.size === 0 && !this.followers.has(id)) this.rooms.delete(id);
   }

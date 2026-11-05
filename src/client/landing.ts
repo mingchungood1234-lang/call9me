@@ -1,7 +1,8 @@
-import type { AvailabilityResponse, LoginResponse } from '../shared/types';
+import type { AvailabilityResponse, LoginResponse, PairStartResponse, PairStatusResponse } from '../shared/types';
 import { isValidPin, isValidUserId, PIN_RULES, USER_ID_RULES } from '../shared/validation';
 import { $, autoFocus } from './lib/dom';
 import { registerServiceWorker } from './lib/push';
+import { formatPairCode, renderQr } from './lib/qr';
 import { bindThemeToggle } from './lib/theme';
 import { UpdateWatcher } from './lib/updates';
 import { lockZoomInStandalone } from './lib/zoom';
@@ -58,7 +59,7 @@ function setupIdForm(): void {
         const data: AvailabilityResponse = await (await fetch(`/api/users/${encodeURIComponent(id)}/availability`)).json();
         if (seq !== lookupSeq) return;
         setHint(idHint, data.registered ? `Welcome back, ${id}!` : 'This ID is free — it will be created for you.', 'ok');
-        setHint(pinHint, data.message, data.online ? 'error' : 'neutral');
+        setHint(pinHint, data.message, 'neutral');
       } catch {
         if (seq === lookupSeq) setHint(idHint, 'Looks good!', 'ok');
       }
@@ -206,6 +207,88 @@ function setupGoogleForm(form: HTMLFormElement): void {
 }
 const googleForm = document.querySelector<HTMLFormElement>('#google-form');
 if (googleForm) setupGoogleForm(googleForm);
+
+const PAIR_POLL_MS = 2000;
+
+/** "Sign in with a QR code": show a code, wait for a signed-in device to approve it, then go in. */
+function setupQrSignIn(): void {
+  const startBtn = $<HTMLButtonElement>('#qr-btn');
+  const panel = $<HTMLElement>('#qr-panel');
+  const codeEl = $<HTMLElement>('#qr-code');
+  const codeText = $<HTMLElement>('#qr-code-text');
+  const hint = $<HTMLElement>('#qr-hint');
+  const hideWhileOpen = ['#id-form', '#google-btn', '.or-divider'].map((s) => document.querySelector<HTMLElement>(s));
+  const defaultHint = hint.innerHTML; // static markup from the page
+  let pollTimer: ReturnType<typeof setTimeout> | undefined;
+  let expiresAt = 0;
+
+  function show(open: boolean): void {
+    panel.hidden = !open;
+    startBtn.hidden = open;
+    for (const node of hideWhileOpen) if (node) node.hidden = open;
+    if (!open) clearTimeout(pollTimer);
+  }
+
+  function setHint(text: string, state: 'neutral' | 'error'): void {
+    hint.textContent = text;
+    hint.dataset.state = state;
+  }
+
+  async function start(): Promise<void> {
+    clearTimeout(pollTimer);
+    show(true);
+    codeEl.classList.remove('is-expired');
+    hint.innerHTML = defaultHint;
+    hint.dataset.state = 'neutral';
+    try {
+      const data: PairStartResponse = await (await fetch('/api/pair/start', { method: 'POST' })).json();
+      if (!data.ok) {
+        setHint(data.error, 'error');
+        return;
+      }
+      renderQr(codeEl, data.url);
+      codeText.textContent = formatPairCode(data.code);
+      expiresAt = data.expiresAt;
+      pollTimer = setTimeout(poll, PAIR_POLL_MS);
+    } catch {
+      setHint('Could not reach the server. Please try again.', 'error');
+    }
+  }
+
+  async function poll(): Promise<void> {
+    if (panel.hidden) return;
+    try {
+      const data: PairStatusResponse = await (await fetch('/api/pair/status', { cache: 'no-store' })).json();
+      if (data.ok && data.status === 'approved') {
+        try {
+          localStorage.setItem(LAST_ID_KEY, data.userId);
+        } catch {
+          /* ignore */
+        }
+        setHint(`Approved. Signing you in as ${data.userId}…`, 'neutral');
+        window.location.href = safeNext(new URLSearchParams(window.location.search).get('next'));
+        return;
+      }
+      if ((data.ok && data.status === 'expired') || Date.now() > expiresAt) {
+        codeEl.classList.add('is-expired');
+        setHint('This code has expired.', 'error');
+        startBtn.hidden = false;
+        startBtn.textContent = 'Get a new code';
+        return;
+      }
+    } catch {
+      // Offline for a moment: keep trying until the code expires.
+    }
+    pollTimer = setTimeout(poll, PAIR_POLL_MS);
+  }
+
+  startBtn.addEventListener('click', () => void start());
+  $<HTMLButtonElement>('#qr-cancel').addEventListener('click', () => {
+    show(false);
+    startBtn.textContent = 'Sign in with a QR code';
+  });
+}
+if (document.querySelector('#qr-btn')) setupQrSignIn();
 
 void registerServiceWorker();
 

@@ -7,6 +7,9 @@ import { ChatPanel } from './lib/ChatPanel';
 import { currentPalette, currentTextSize, setPalette, setTextSize, type PaletteId, type TextSize } from './lib/appearance';
 import { CustomEmojiStore } from './lib/emoji';
 import { FriendsPanel } from './lib/FriendsPanel';
+import { JoinDialog } from './lib/JoinDialog';
+import { LinkDeviceDialog } from './lib/LinkDeviceDialog';
+import { RoomMembersDialog } from './lib/RoomMembersDialog';
 import { RoomsPanel } from './lib/RoomsPanel';
 import { ShareDialog } from './lib/ShareDialog';
 import { $, avatar, avatarUrlOf, el, formatDuration, hueFor, onAvatarsChange, paintAvatar, setAvatarUrls, toast } from './lib/dom';
@@ -329,10 +332,10 @@ socket.on('disconnect', (reason) => {
 socket.on('connect_error', (err) => {
   if (err.message === CONNECT_ERRORS.UNAUTHORIZED) {
     window.location.replace('/?error=session');
-  } else if (err.message === CONNECT_ERRORS.ID_TAKEN) {
+  } else if (err.message === CONNECT_ERRORS.TOO_MANY_DEVICES) {
     // After a page refresh the old connection may take a moment to be released.
     if (takenRetries++ < 3) setTimeout(() => socket.connect(), 1000);
-    else window.location.replace('/?error=taken');
+    else window.location.replace('/?error=devices');
   }
 });
 
@@ -935,7 +938,10 @@ const rooms = new RoomsPanel(socket, userId, {
   onJoinCall: (roomId) => joinRoomCall(roomId),
   onShare: (roomId) => share.open(roomId, false),
   onLeave: (roomId) => chat.leave(roomId),
+  onMembers: (roomId) => roomMembers.open(roomId),
 });
+const roomMembers = new RoomMembersDialog(socket);
+const joinDialog = new JoinDialog(socket);
 
 // ---- Sharing rooms: to friends in the app, or by link (copied automatically) ----
 const share = new ShareDialog(socket, {
@@ -1018,6 +1024,11 @@ chat.isOnScreen = () => tabs.isVisible('chat') && document.visibilityState === '
 document.addEventListener('visibilitychange', () => chat.markRead());
 // `@` suggestions beyond the room: friends first, then everyone online.
 chat.mentionCandidates = () => [...(friends?.current.friends ?? []), ...lastUsers.map((u) => u.id)];
+// Joining is permanent (it stays in the list, with notifications, until we leave), so show the room and ask first.
+chat.beforeJoin = async (roomId, key) => {
+  if (rooms.find(roomId)?.owner.toLowerCase() === userId.toLowerCase()) return true;
+  return joinDialog.open(roomId, key);
+};
 // Leaving an invite-only room you don't own means needing its link to come back.
 chat.beforeLeave = (roomId) => {
   const room = rooms.find(roomId);
@@ -1152,6 +1163,19 @@ navigator.serviceWorker?.addEventListener('message', (event: MessageEvent<{ type
 });
 
 void push.init().then(renderPushStatus);
+
+// ---- Signing in other devices (QR code) ----
+const linkDevice = new LinkDeviceDialog(userId);
+$('#link-device-btn').addEventListener('click', () => {
+  setSettingsOpen(false);
+  linkDevice.open();
+});
+// Opened from the QR code's link (e.g. scanned with a phone's camera app while signed in there).
+const pairParam = new URLSearchParams(window.location.search).get('pair');
+if (pairParam) {
+  linkDevice.open(pairParam);
+  history.replaceState(null, '', '/app');
+}
 
 // ---- Sign out ----
 $('#leave-btn').addEventListener('click', async () => {

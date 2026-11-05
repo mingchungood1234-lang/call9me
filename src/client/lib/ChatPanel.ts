@@ -1,4 +1,4 @@
-import type { ChatMessage, ChatRoomPreview } from '../../shared/types';
+import type { ChatMessage, ChatRoomPreview, RoomPrefs } from '../../shared/types';
 import { isValidRoomId, MAX_MESSAGE_LENGTH, PUBLIC_ROOM_ID, ROOM_ID_RULES } from '../../shared/validation';
 import { $, autoFocus, avatar, el, formatTime, hueFor, toast } from './dom';
 import { renderRichText, type CustomEmojiStore } from './emoji';
@@ -37,6 +37,13 @@ export class ChatPanel {
   private readonly leaveBtn = $<HTMLButtonElement>('#leave-room-btn');
   /** Opening the share dialog is up to the app (see app.ts); this only shows it while in a room. */
   private readonly shareBtn = $<HTMLButtonElement>('#share-room-btn');
+  private readonly moreBtn = $<HTMLButtonElement>('#room-more-btn');
+  /** Whether the Archived section of the list is expanded. */
+  private showArchived = false;
+  /** Pin / mute / archive / leave for one room (opened from ⋯ in the list or the header). */
+  private readonly actions: HTMLDialogElement;
+  private readonly actionsTitle: HTMLElement;
+  private readonly actionsList: HTMLElement;
   private readonly roomTitle = $<HTMLElement>('#room-title');
   private readonly membersEl = $<HTMLElement>('#room-members');
   private readonly messagesEl = $<HTMLElement>('#messages');
@@ -45,6 +52,8 @@ export class ChatPanel {
   private readonly sendBtn = $<HTMLButtonElement>('#send-btn');
   private readonly readonlyNote = $<HTMLElement>('#chat-readonly');
 
+  /** Asked before joining a room that isn't in our list yet; joining keeps it there until we leave. */
+  beforeJoin: (roomId: string, key?: string) => Promise<boolean> = async () => true;
   /** Asked before leaving (e.g. to warn that an invite-only room needs its link again). */
   beforeLeave: (roomId: string) => boolean = () => true;
   /** More people to suggest after `@` (besides this room's members). */
@@ -77,6 +86,24 @@ export class ChatPanel {
       this.join(this.roomInput.value.trim());
     });
     this.leaveBtn.addEventListener('click', () => this.leave());
+    this.moreBtn.addEventListener('click', () => {
+      if (this.currentRoom) this.openActions(this.currentRoom);
+    });
+
+    this.actionsTitle = el('h3', { className: 'share-title' });
+    this.actionsList = el('div', { className: 'room-actions-list' });
+    const closeBtn = el('button', { className: 'btn btn-ghost', text: 'Close' });
+    closeBtn.type = 'button';
+    closeBtn.addEventListener('click', () => this.actions.close());
+    this.actions = el('dialog', { className: 'share-dialog room-actions-sheet' }, [
+      this.actionsTitle,
+      this.actionsList,
+      el('div', { className: 'dialog-actions' }, [closeBtn]),
+    ]);
+    this.actions.addEventListener('click', (e) => {
+      if (e.target === this.actions) this.actions.close(); // backdrop
+    });
+    document.body.append(this.actions);
     $('#chat-back-btn').addEventListener('click', () => this.back());
     this.messageForm.addEventListener('submit', (e) => {
       e.preventDefault();
@@ -91,6 +118,12 @@ export class ChatPanel {
     socket.on('chat:message', (message) => this.onMessage(message));
     socket.on('chat:members', ({ roomId, members }) => {
       if (roomId === this.currentRoom) this.renderMembers(members);
+    });
+    socket.on('chat:removed', ({ roomId, by, banned }) => {
+      this.inbox.delete(roomId);
+      if (roomId === this.currentRoom) this.showList();
+      this.renderList();
+      toast(banned ? `${by} banned you from #${roomId}.` : `${by} removed you from #${roomId}.`, 'error', 6000);
     });
     socket.on('chat:deleted', ({ roomId, by }) => {
       this.inbox.delete(roomId);
@@ -128,6 +161,18 @@ export class ChatPanel {
       if (!silent) toast(NOT_CONNECTED, 'error');
       return;
     }
+    // A room that isn't in our list yet: show what it is and ask first (joining is for good).
+    if (!silent && id !== PUBLIC_ROOM_ID && !this.inbox.has(id)) {
+      void this.beforeJoin(id, key).then((join) => {
+        if (join) this.open(roomId, silent, key);
+      });
+      return;
+    }
+    this.open(roomId, silent, key);
+  }
+
+  private open(roomId: string, silent: boolean, key?: string): void {
+    const id = roomId.toLowerCase();
     const previous = this.currentRoom;
     if (previous && previous !== id) this.socket.emit('chat:close', { roomId: previous });
 
@@ -205,7 +250,7 @@ export class ChatPanel {
     const canPost = !isPublic || this.isAdmin;
     this.listView.hidden = true;
     this.roomView.hidden = false;
-    this.roomTitle.textContent = roomTitle(room);
+    this.roomTitle.textContent = `${roomTitle(room)}${this.inbox.get(room)?.muted ? ' 🔕' : ''}`;
     this.leaveBtn.hidden = isPublic;
     this.shareBtn.hidden = isPublic;
     this.messageForm.hidden = !canPost;
@@ -230,16 +275,36 @@ export class ChatPanel {
     this.renderList();
   }
 
+  /** Public chat first, then pinned rooms, then the rest by latest activity; archived ones in their own section. */
   private renderList(): void {
     const rooms = [...this.inbox.values()].sort((a, b) => {
       if (a.id === PUBLIC_ROOM_ID) return -1;
       if (b.id === PUBLIC_ROOM_ID) return 1;
+      if (!!a.pinned !== !!b.pinned) return a.pinned ? -1 : 1;
       return (b.lastMessage?.timestamp ?? 0) - (a.lastMessage?.timestamp ?? 0);
     });
-    const total = rooms.reduce((sum, r) => sum + r.unread, 0);
+    // Muted and archived rooms don't add to the Chat tab badge.
+    const total = rooms.reduce((sum, r) => sum + (r.muted || r.archived ? 0 : r.unread), 0);
     this.onUnreadChange(total);
 
-    const items = rooms.map((room) => this.renderListItem(room));
+    const active = rooms.filter((r) => !r.archived);
+    const archived = rooms.filter((r) => r.archived);
+    const items = active.map((room) => this.renderListItem(room));
+    if (archived.length) {
+      const unread = archived.reduce((sum, r) => sum + r.unread, 0);
+      const toggle = el('button', {
+        className: 'list-heading chat-archived-toggle',
+        text: `${this.showArchived ? '▾' : '▸'} Archived (${archived.length})${unread ? ` · ${unread} unread` : ''}`,
+      });
+      toggle.type = 'button';
+      toggle.setAttribute('aria-expanded', String(this.showArchived));
+      toggle.addEventListener('click', () => {
+        this.showArchived = !this.showArchived;
+        this.renderList();
+      });
+      items.push(el('li', { className: 'chat-archived' }, [toggle]));
+      if (this.showArchived) items.push(...archived.map((room) => this.renderListItem(room)));
+    }
     if (rooms.length <= 1) {
       items.push(el('li', { className: 'empty-state', text: 'Join a room above, or open one from People → Rooms. Your rooms show up here.' }));
     }
@@ -258,11 +323,25 @@ export class ChatPanel {
       preview = last.system ? body : `${last.from === this.userId ? 'You' : last.from}: ${body}`;
     }
 
-    const item = el('li', { className: `chat-item${room.unread ? ' has-unread' : ''}${isPublic ? ' is-public' : ''}` }, [
+    const flags: HTMLElement[] = [];
+    if (room.pinned) flags.push(el('span', { className: 'chat-flag', text: '📌', title: 'Pinned' }));
+    if (room.muted) flags.push(el('span', { className: 'chat-flag', text: '🔕', title: 'Muted' }));
+    const more = el('button', { className: 'btn btn-ghost btn-small icon-only chat-item-more', text: '⋯', title: `Options for ${roomTitle(room.id)}` });
+    more.type = 'button';
+    more.setAttribute('aria-label', `Options for ${roomTitle(room.id)}`);
+    more.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.openActions(room.id);
+    });
+    more.addEventListener('keydown', (e) => e.stopPropagation()); // Enter/Space on ⋯ shouldn't open the room
+
+    const unreadClass = room.unread ? ` has-unread${room.muted ? ' is-muted' : ''}` : '';
+    const item = el('li', { className: `chat-item${unreadClass}${isPublic ? ' is-public' : ''}` }, [
       icon,
       el('span', { className: 'chat-item-main' }, [
         el('span', { className: 'chat-item-top' }, [
           el('span', { className: 'user-name', text: roomTitle(room.id) }),
+          ...flags,
           el('time', { className: 'chat-item-time', text: last ? listTime(last.timestamp) : '' }),
         ]),
         el('span', { className: 'chat-item-bottom' }, [
@@ -270,11 +349,16 @@ export class ChatPanel {
           ...(room.unread ? [el('span', { className: 'chat-unread', text: room.unread > 99 ? '99+' : String(room.unread) })] : []),
         ]),
       ]),
+      more,
     ]);
     item.tabIndex = 0;
     item.setAttribute('role', 'button');
     item.setAttribute('aria-label', `${roomTitle(room.id)}${room.unread ? `, ${room.unread} unread` : ''}`);
     item.addEventListener('click', () => this.join(room.id));
+    item.addEventListener('contextmenu', (e) => {
+      e.preventDefault(); // long-press / right-click: the same options as ⋯
+      this.openActions(room.id);
+    });
     item.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault();
@@ -282,6 +366,61 @@ export class ChatPanel {
       }
     });
     return item;
+  }
+
+  // ---- Room options: pin, mute, archive, leave ----
+
+  private openActions(roomId: string): void {
+    const room = this.inbox.get(roomId);
+    if (!room) return;
+    const isPublic = roomId === PUBLIC_ROOM_ID;
+    this.actionsTitle.textContent = roomTitle(roomId);
+    const option = (text: string, onClick: () => void, variant = 'btn-secondary') => {
+      const button = el('button', { className: `btn ${variant}`, text });
+      button.type = 'button';
+      button.addEventListener('click', () => {
+        this.actions.close();
+        onClick();
+      });
+      return button;
+    };
+    const buttons: HTMLButtonElement[] = [];
+    if (!isPublic) buttons.push(option(room.pinned ? '📌 Unpin' : '📌 Pin to top', () => this.setPrefs(roomId, { pinned: !room.pinned })));
+    buttons.push(
+      option(room.muted ? '🔔 Unmute notifications' : '🔕 Mute notifications', () => this.setPrefs(roomId, { muted: !room.muted })),
+    );
+    if (!isPublic) {
+      buttons.push(option(room.archived ? '📤 Unarchive' : '🗄️ Archive', () => this.setPrefs(roomId, { archived: !room.archived })));
+      buttons.push(option('Leave room', () => this.leave(roomId), 'btn-ghost btn-delete'));
+    }
+    this.actionsList.replaceChildren(...buttons);
+    this.actions.showModal();
+  }
+
+  private setPrefs(roomId: string, changes: RoomPrefs): void {
+    const room = this.inbox.get(roomId);
+    if (!room) return;
+    if (!this.socket.connected) {
+      toast(NOT_CONNECTED, 'error');
+      return;
+    }
+    const before: RoomPrefs = { pinned: room.pinned, muted: room.muted, archived: room.archived };
+    Object.assign(room, changes);
+    this.renderList();
+    if (roomId === this.currentRoom) this.showRoom();
+    this.socket.emit('chat:prefs', { roomId, ...changes }, withTimeout((res) => {
+      if (res.ok) {
+        const what = changes.pinned !== undefined ? (changes.pinned ? 'Pinned' : 'Unpinned')
+          : changes.muted !== undefined ? (changes.muted ? 'Muted' : 'Unmuted')
+          : changes.archived ? 'Archived' : 'Unarchived';
+        toast(`${what} ${roomTitle(roomId)}.`, 'success');
+        return;
+      }
+      toast(res.error, 'error');
+      Object.assign(room, before);
+      this.renderList();
+      if (roomId === this.currentRoom) this.showRoom();
+    }));
   }
 
   // ---- Conversation ----

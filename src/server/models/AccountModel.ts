@@ -18,8 +18,12 @@ interface Account {
 }
 
 interface FailureRecord {
+  /** Wrong PINs since the last lockout. */
   count: number;
   lockedUntil: number;
+  /** Lockouts in a row: each one lasts longer (see config.pinLockoutStepsMs). */
+  lockouts: number;
+  lastFailureAt: number;
 }
 
 export type LoginResult = { ok: true; id: string; created: boolean } | { ok: false; error: string };
@@ -32,8 +36,12 @@ export class AccountModel {
   private readonly accounts = new Map<string, Account>();
   private readonly failures = new Map<string, FailureRecord>();
 
+  private readonly failuresFile: string;
+
   constructor(private readonly file: string) {
+    this.failuresFile = path.join(path.dirname(file), 'pin-failures.json');
     this.load();
+    this.loadFailures();
   }
 
   private key(id: string): string {
@@ -90,7 +98,8 @@ export class AccountModel {
     const failure = this.failures.get(key);
     if (failure && failure.lockedUntil > Date.now()) {
       const seconds = Math.ceil((failure.lockedUntil - Date.now()) / 1000);
-      return { ok: false, error: `Too many wrong PINs. Try again in ${seconds}s.` };
+      const wait = seconds < 120 ? `${seconds}s` : `${Math.ceil(seconds / 60)} min`;
+      return { ok: false, error: `Too many wrong PINs for this ID. Try again in ${wait}.` };
     }
 
     const existing = this.accounts.get(key);
@@ -111,16 +120,58 @@ export class AccountModel {
     }
     const hash = await scrypt(pin, existing.salt, 32);
     if (!timingSafeEqual(hash, Buffer.from(existing.pinHash, 'hex'))) {
-      // A lockout that has expired starts a fresh count.
-      const record = failure && failure.lockedUntil === 0 ? failure : { count: 0, lockedUntil: 0 };
-      record.count += 1;
-      if (record.count >= config.maxPinFailures) record.lockedUntil = Date.now() + config.pinLockoutMs;
-      this.failures.set(key, record);
+      this.recordFailure(key);
       return { ok: false, error: 'Wrong PIN for this ID.' };
     }
 
-    this.failures.delete(key);
+    if (this.failures.delete(key)) this.persistFailures();
     return { ok: true, id: existing.id, created: false };
+  }
+
+  /**
+   * Every `maxPinFailures` wrong PINs lock the ID for longer than the last time: guessing
+   * all 10,000 PINs takes months instead of hours. A quiet day resets the escalation.
+   */
+  private recordFailure(key: string): void {
+    const now = Date.now();
+    let record = this.failures.get(key);
+    if (!record || now - record.lastFailureAt > config.pinFailureResetMs) {
+      record = { count: 0, lockedUntil: 0, lockouts: 0, lastFailureAt: now };
+    }
+    record.count += 1;
+    record.lastFailureAt = now;
+    if (record.count >= config.maxPinFailures) {
+      const steps = config.pinLockoutStepsMs;
+      record.lockedUntil = now + steps[Math.min(record.lockouts, steps.length - 1)];
+      record.lockouts += 1;
+      record.count = 0;
+    }
+    this.failures.set(key, record);
+    this.persistFailures();
+  }
+
+  /** Lockouts survive restarts, so restarting the server doesn't reset them. */
+  private loadFailures(): void {
+    try {
+      const data: Record<string, FailureRecord> = JSON.parse(fs.readFileSync(this.failuresFile, 'utf8'));
+      const cutoff = Date.now() - config.pinFailureResetMs;
+      for (const [key, record] of Object.entries(data)) {
+        if (record.lastFailureAt > cutoff || record.lockedUntil > Date.now()) this.failures.set(key, record);
+      }
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') console.warn(`[accounts] could not read ${this.failuresFile}:`, err);
+    }
+  }
+
+  private persistFailures(): void {
+    try {
+      fs.mkdirSync(path.dirname(this.failuresFile), { recursive: true });
+      const tmp = `${this.failuresFile}.tmp`;
+      fs.writeFileSync(tmp, JSON.stringify(Object.fromEntries(this.failures)));
+      fs.renameSync(tmp, this.failuresFile);
+    } catch (err) {
+      console.warn('[accounts] could not save PIN failures:', err);
+    }
   }
 
   private load(): void {

@@ -44,6 +44,6 @@ export class StickerController {
 
   private sendList(userId: string): void {
     const user = userModel.find(userId);
-    if (user) this.io.to(user.socketId).emit('stickers:update', stickerModel.list(userId));
+    if (user) this.io.to(user.channel).emit('stickers:update', stickerModel.list(userId));
   }
 }

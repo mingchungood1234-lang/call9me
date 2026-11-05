@@ -6,7 +6,7 @@ import { config } from '../config';
 import { parseCookies, requestUserId, sessionTokenFrom, setSessionCookie } from '../middleware/session';
 import { accountModel } from '../models/AccountModel';
 import { sessionModel } from '../models/SessionModel';
-import { userModel } from '../models/UserModel';
+import { allowRequest, clientIp, httpLimits } from '../services/RateLimiter';
 import { safeNext } from './PageController';
 
 const AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
@@ -209,6 +209,7 @@ export class GoogleAuthController {
       res.status(400).json({ ok: false, error: `Invalid ID. ${USER_ID_RULES}` });
       return;
     }
+    if (!allowRequest(res, httpLimits.login, clientIp(req))) return;
 
     let finalId: string;
     let created = false;
@@ -240,20 +241,12 @@ export class GoogleAuthController {
 
     pending.delete(token);
     res.clearCookie(PENDING_COOKIE, { path: '/' });
-    if (userModel.isTaken(finalId)) {
-      res.status(409).json({ ok: false, error: 'This ID is already signed in on another tab or device.' });
-      return;
-    }
     sessionModel.destroy(sessionTokenFrom(req.headers.cookie));
     setSessionCookie(req, res, sessionModel.create(finalId));
     res.json({ ok: true, userId: finalId, created, next: p.next });
   }
 
   private static signIn(req: Request, res: Response, id: string, next: string): void {
-    if (userModel.isTaken(id)) {
-      res.redirect('/?error=taken');
-      return;
-    }
     sessionModel.destroy(sessionTokenFrom(req.headers.cookie));
     setSessionCookie(req, res, sessionModel.create(id));
     res.redirect(next);

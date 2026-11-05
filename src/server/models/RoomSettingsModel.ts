@@ -14,6 +14,8 @@ export interface RoomSettings {
   key?: string;
   /** People who joined through the invite link or had the room shared with them; they can always come back. */
   members?: string[];
+  /** People the owner banned: they can't see or enter the room, not even with its link. */
+  banned?: string[];
 }
 
 const newKey = () => randomBytes(12).toString('base64url');
@@ -76,6 +78,28 @@ export class RoomSettingsModel {
   isMember(settings: RoomSettings, userId: string): boolean {
     const key = userId.toLowerCase();
     return settings.members?.some((m) => m.toLowerCase() === key) ?? false;
+  }
+
+  isBanned(settings: RoomSettings, userId: string): boolean {
+    const key = userId.toLowerCase();
+    return settings.banned?.some((b) => b.toLowerCase() === key) ?? false;
+  }
+
+  ban(settings: RoomSettings, userId: string): void {
+    this.removeMember(settings, userId);
+    if (this.isBanned(settings, userId)) return;
+    (settings.banned ??= []).push(userId);
+    this.schedulePersist();
+  }
+
+  /** @returns whether they were banned. */
+  unban(settings: RoomSettings, userId: string): boolean {
+    const key = userId.toLowerCase();
+    const before = settings.banned?.length ?? 0;
+    settings.banned = settings.banned?.filter((b) => b.toLowerCase() !== key);
+    const removed = (settings.banned?.length ?? 0) < before;
+    if (removed) this.schedulePersist();
+    return removed;
   }
 
   addMember(settings: RoomSettings, userId: string): void {

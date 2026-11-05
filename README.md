@@ -29,7 +29,10 @@ The app listens on `127.0.0.1:3000`, so put an HTTPS reverse proxy in front of i
 
 ## Features
 
-- **Sign in with ID + PIN.** The ID is 3–20 English letters, digits or `_`, starting with a letter. The PIN is 4 digits. There is no email or SMS verification: the first sign-in with an ID creates it with that PIN, and later sign-ins must use the same PIN. Five wrong PINs lock the ID for one minute. PINs are stored as salted scrypt hashes.
+- **Sign in with ID + PIN.** The ID is 3–20 English letters, digits or `_`, starting with a letter. The PIN is 4 digits. There is no email or SMS verification: the first sign-in with an ID creates it with that PIN, and later sign-ins must use the same PIN. Every five wrong PINs lock the ID, for longer each time (1 min, 5 min, 15 min, 1 h, 6 h, then 24 h); a day without wrong PINs resets this, and lockouts survive restarts. PINs are stored as salted scrypt hashes.
+- **Sign in on several devices.** One ID can be open on up to 5 devices or tabs at once (`MAX_DEVICES_PER_USER`). Calls ring on all of them; the device that answers takes the call and the others stop ringing. Chats, rooms and friends stay in sync. Signing out only signs out that device.
+- **Sign in with a QR code.** On the sign-in page, choose "Sign in with a QR code". On a device that's already signed in, open the profile menu → **Sign in another device** and scan the code with the camera, or type it in. You see which browser is asking before approving. Codes work once and expire after 2 minutes. The scanner is built into the app because an iPhone home-screen app doesn't share its sign-in with Safari.
+- **Rate limits.** Per IP address: 10 sign-ins per minute, 5 new IDs per hour, and limits on QR codes and ID lookups. Per user: limits on messages, invites, friend requests, shares and uploads. Behind a reverse proxy, set `TRUST_PROXY` so the real client address is used; otherwise everyone shares the proxy's limits.
 - **Group calls.** Up to 8 people per call (configurable). Start a video or voice call, then add more people from the online list or by ID; anyone already in the call can add people. Unanswered invites ring for 30 seconds. Controls: mute, camera on/off, share screen and leave.
 - **Call rooms.** In the Call panel, choose "Join a room" and enter a room ID. Everyone who joins the same ID is in the same group call, with no invites needed. A room stays open while anyone is in it, and you can share it as a link (`/app?call=<room>`). If you open the link while signed out, you're returned to it after signing in.
 - **Screen sharing.** Available on desktop browsers. Phones can't capture their screen from a browser, so they can only watch a share, and while someone is sharing, a phone shows just the shared screen at full size. Viewers can't pause a share: call videos have no controls, and anything that pauses one (a tap, the iPhone full-screen player, media keys, or the app going to the background) starts it again.
@@ -102,6 +105,7 @@ The username and password must match a `user=call9me:YourStrongPassword` line in
 | `TURN_URLS` / `TURN_USERNAME` / `TURN_PASSWORD` | none | Your TURN server, for example coturn. Needed for users on strict NATs or mobile networks. |
 | `ICE_SERVERS`           | none                       | Advanced: a full JSON array of `RTCIceServer` objects. If set, it overrides `STUN_URLS` and the `TURN_*` settings. |
 | `MAX_CALL_PARTICIPANTS` | `8`                        | |
+| `MAX_DEVICES_PER_USER`  | `5`                        | Devices (app tabs) one ID can be signed in on at the same time. |
 | `DATA_DIR`              | `./data`                   | Where accounts, push subscriptions and VAPID keys are stored. |
 | `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` | generated into `data/vapid.json` | Keep these stable: if they change, every existing push subscription stops working. |
 | `VAPID_SUBJECT`         | `mailto:admin@call9me.local` | Set this to your own contact address. |

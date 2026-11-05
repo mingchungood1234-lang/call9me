@@ -100,7 +100,13 @@ export const config = {
   sessionTtlMs: 30 * 24 * 60 * 60 * 1000,
   /** Failed PIN attempts allowed per ID before a temporary lockout. */
   maxPinFailures: 5,
-  pinLockoutMs: 60 * 1000,
+  /** Each lockout in a row lasts longer (the last step repeats); a day without wrong PINs starts over. */
+  pinLockoutStepsMs: [60_000, 5 * 60_000, 15 * 60_000, 60 * 60_000, 6 * 60 * 60_000, 24 * 60 * 60_000],
+  pinFailureResetMs: 24 * 60 * 60_000,
+  /** Devices (open app tabs) that can be signed in to one ID at the same time. */
+  maxDevicesPerUser: Number(process.env.MAX_DEVICES_PER_USER ?? 5),
+  /** How long a "sign in with QR code" request waits to be approved from a signed-in device. */
+  pairingTtlMs: 2 * 60_000,
   /** Contact for push services (VAPID "sub"); must be a mailto: or https: URL. */
   // Stray quotes/spaces (e.g. VAPID_SUBJECT="mailto:x" kept literally by some tools) make Apple reject every push.
   vapidSubject: (process.env.VAPID_SUBJECT ?? 'mailto:admin@call9me.local').trim().replace(/^["']|["']$/g, '').trim(),

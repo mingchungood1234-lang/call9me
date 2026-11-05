@@ -5,9 +5,9 @@ import { accountModel } from '../models/AccountModel';
 import { callModel } from '../models/CallModel';
 import { pushSubscriptionModel } from '../models/PushSubscriptionModel';
 import { roomModel } from '../models/RoomModel';
-import { roomSettingsModel } from '../models/RoomSettingsModel';
+import { roomSettingsModel, type RoomSettings } from '../models/RoomSettingsModel';
 import { stickerModel } from '../models/StickerModel';
-import { userModel } from '../models/UserModel';
+import { userChannel, userModel } from '../models/UserModel';
 import { pushService } from '../services/PushService';
 import { roomDirectory } from '../services/RoomDirectory';
 import type { AppServer, AppSocket } from '../sockets/types';
@@ -15,6 +15,9 @@ import { safeAck } from '../sockets/util';
 
 const channel = (roomId: string) => `room:${roomId}`;
 const CHAT_PUSH_THROTTLE_MS = 15_000;
+/** Messages shown in a room's preview before joining it. */
+const PREVIEW_MESSAGES = 8;
+const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
 
 /**
  * Chat rooms. Joining a room puts it in your chat list (you "follow" it) until you leave
@@ -48,17 +51,53 @@ export class ChatController {
       // Everyone is always in the Public chat; other rooms are joined once, then stay in the list.
       const newlyJoined = !isPublic && !roomModel.isFollower(roomId, userId);
       roomModel.join(roomId, userId);
-      if (!isPublic) roomModel.follow(roomId, userId);
+      if (!isPublic) {
+        roomModel.follow(roomId, userId);
+        // Joined for good: they keep access even if the room is made private or link-only later.
+        roomSettingsModel.addMember(roomSettingsModel.claim(roomId, userId), userId);
+      }
       roomModel.markRead(userId, roomId);
-      socket.join(channel(roomId));
+      // All our devices get the room's live messages, not just this one.
+      this.io.in(userChannel(userId)).socketsJoin(channel(roomId));
 
       ack({ ok: true, roomId, history: roomModel.history(roomId), members: roomModel.members(roomId) });
       if (newlyJoined) {
         const notice = roomModel.addMessage(roomId, userId, `${userId} joined`, true);
         socket.to(channel(roomId)).emit('chat:message', notice);
+        this.syncList(socket, userId);
       }
       this.emitMembers(roomId);
       roomDirectory.changed();
+    });
+
+    // What a room looks like before joining: its listing and latest messages. Grants nothing.
+    socket.on('chat:preview', (payload, rawAck) => {
+      const ack = safeAck(rawAck);
+      if (!isValidRoomId(payload?.roomId)) return ack({ ok: false, error: `Invalid room ID. ${ROOM_ID_RULES}` });
+      const settings = roomSettingsModel.get(payload.roomId);
+      if (!settings) return ack({ ok: true, room: null, recent: [] });
+      const denied = roomDirectory.denyReason(settings.id, userId, payload.key, false);
+      if (denied) return ack({ ok: false, error: denied });
+      const recent = roomModel.messagesOf(settings.id).filter((m) => !m.system).slice(-PREVIEW_MESSAGES);
+      roomModel.release(settings.id); // loaded only for this peek
+      ack({ ok: true, room: roomDirectory.summary(settings, userId), recent });
+    });
+
+    // Pin / mute / archive a room in our list. The Public chat can only be muted.
+    socket.on('chat:prefs', (payload, rawAck) => {
+      const ack = safeAck(rawAck);
+      if (!isValidRoomId(payload?.roomId)) return ack({ ok: false, error: `Invalid room ID. ${ROOM_ID_RULES}` });
+      const roomId = roomModel.normalize(payload.roomId);
+      const isPublic = roomId === PUBLIC_ROOM_ID;
+      if (!isPublic && !roomModel.isFollower(roomId, userId)) return ack({ ok: false, error: `Join #${roomId} first` });
+      const flag = (value: unknown) => (typeof value === 'boolean' ? value : undefined);
+      roomModel.setPrefs(userId, roomId, {
+        muted: flag(payload.muted),
+        pinned: isPublic ? undefined : flag(payload.pinned),
+        archived: isPublic ? undefined : flag(payload.archived),
+      });
+      ack({ ok: true });
+      this.syncList(socket, userId);
     });
 
     // Back to the chat list: no longer viewing, but still in the room (and its messages).
@@ -118,6 +157,57 @@ export class ChatController {
       ack({ ok: true });
     });
 
+    // ---- The owner's controls: who's in the room, removing and banning people ----
+
+    socket.on('rooms:members', (payload, rawAck) => {
+      const ack = safeAck(rawAck);
+      const settings = this.ownedRoom(payload?.roomId, userId);
+      if (typeof settings === 'string') return ack({ ok: false, error: settings });
+      const banned = [...(settings.banned ?? [])].sort((a, b) => a.localeCompare(b));
+      ack({ ok: true, members: this.joinedMembers(settings), banned });
+    });
+
+    socket.on('rooms:remove-member', (payload, rawAck) => {
+      const ack = safeAck(rawAck);
+      const settings = this.ownedRoom(payload?.roomId, userId);
+      if (typeof settings === 'string') return ack({ ok: false, error: settings });
+      const target = typeof payload.userId === 'string' ? payload.userId : '';
+      if (!target || same(target, settings.owner)) return ack({ ok: false, error: 'Choose someone else to remove' });
+      const ban = payload.ban === true;
+      const wasIn = roomDirectory.hasJoined(settings, target);
+      if (!wasIn && !ban) return ack({ ok: false, error: `${target} is not in #${settings.id}` });
+
+      if (ban) roomSettingsModel.ban(settings, target);
+      else roomSettingsModel.removeMember(settings, target);
+      const follower = roomModel.followersOf(settings.id).find((f) => same(f, target));
+      if (follower) roomModel.unfollow(settings.id, follower);
+      const viewer = roomModel.members(settings.id).find((m) => same(m, target));
+      if (viewer) roomModel.leave(settings.id, viewer);
+      const user = userModel.find(target);
+      if (user) {
+        this.io.in(user.channel).socketsLeave(channel(settings.id));
+        this.io.to(user.channel).emit('chat:removed', { roomId: settings.id, by: userId, banned: ban });
+      }
+      if (wasIn) {
+        const notice = roomModel.addMessage(settings.id, userId, `${target} was ${ban ? 'banned' : 'removed'}`, true);
+        this.io.to(channel(settings.id)).emit('chat:message', notice);
+      }
+      ack({ ok: true });
+      this.emitMembers(settings.id);
+      roomDirectory.changed();
+    });
+
+    socket.on('rooms:unban', (payload, rawAck) => {
+      const ack = safeAck(rawAck);
+      const settings = this.ownedRoom(payload?.roomId, userId);
+      if (typeof settings === 'string') return ack({ ok: false, error: settings });
+      if (typeof payload.userId !== 'string' || !roomSettingsModel.unban(settings, payload.userId)) {
+        return ack({ ok: false, error: `That person is not banned from #${settings.id}` });
+      }
+      ack({ ok: true });
+      roomDirectory.changed();
+    });
+
     // Only the owner can delete a room; everyone in its chat is moved out first.
     socket.on('rooms:delete', (payload, rawAck) => {
       const ack = safeAck(rawAck);
@@ -154,6 +244,7 @@ export class ChatController {
         lastMessage: [...messages].reverse().find((m) => !m.system) ?? messages.at(-1),
         unread: roomModel.unreadCount(id, userId),
         visibility: roomSettingsModel.get(id)?.visibility,
+        ...roomModel.prefsOf(userId, id),
       };
     };
     const rooms = roomModel
@@ -164,9 +255,28 @@ export class ChatController {
     return [preview(PUBLIC_ROOM_ID), ...rooms];
   }
 
+  /** @returns the room's settings if `userId` owns it, else why not. */
+  private ownedRoom(roomId: unknown, userId: string): RoomSettings | string {
+    const settings = isValidRoomId(roomId) ? roomSettingsModel.get(roomId) : undefined;
+    if (!settings) return 'No such room';
+    if (!same(settings.owner, userId)) return `Only ${settings.owner} can manage #${settings.id}`;
+    return settings;
+  }
+
+  /** Everyone who belongs to the room besides its owner: members and followers, sorted. */
+  private joinedMembers(settings: RoomSettings): string[] {
+    const byKey = new Map<string, string>();
+    for (const id of [...(settings.members ?? []), ...roomModel.followersOf(settings.id)]) {
+      if (!same(id, settings.owner)) byKey.set(id.toLowerCase(), id);
+    }
+    return [...byKey.values()].sort((a, b) => a.localeCompare(b));
+  }
+
   /** @returns why `userId` can't post in `roomId`, or null. */
   private cannotPost(roomId: unknown, userId: string): string | null {
-    if (!isValidRoomId(roomId) || !roomModel.isMember(roomId, userId)) return 'Open the room before sending messages';
+    // Joined, or viewing it now: another of our devices may have closed the room meanwhile.
+    const inRoom = isValidRoomId(roomId) && (roomModel.isMember(roomId, userId) || roomModel.isFollower(roomId, userId));
+    if (!inRoom) return 'Open the room before sending messages';
     if (roomModel.normalize(roomId) === PUBLIC_ROOM_ID && !isAdmin(userId)) return 'Only admins can post in the Public chat';
     return null;
   }
@@ -185,12 +295,18 @@ export class ChatController {
       const notice = roomModel.addMessage(roomId, userId, `${userId} left`, true);
       this.io.to(channel(roomId)).emit('chat:message', notice);
     }
-    socket.leave(channel(roomId));
+    this.io.in(userChannel(userId)).socketsLeave(channel(roomId));
     roomModel.unfollow(roomId, userId);
     const settings = roomSettingsModel.get(roomId);
     if (settings && dropMembership) roomSettingsModel.removeMember(settings, userId);
     this.emitMembers(roomId);
     roomDirectory.changed();
+    this.syncList(socket, userId);
+  }
+
+  /** Our other devices get the updated chat list (after joining, leaving or changing a room's options). */
+  private syncList(socket: AppSocket, userId: string): void {
+    socket.to(userChannel(userId)).emit('chat:rooms', this.chatList(userId));
   }
 
   /**
@@ -206,7 +322,7 @@ export class ChatController {
       if (!id || id.toLowerCase() === from.toLowerCase() || roomDirectory.denyReason(roomId, id)) continue;
       notified.add(id.toLowerCase());
       const user = userModel.find(id);
-      if (user) this.io.to(user.socketId).emit('chat:mention', { from, roomId, text: body });
+      if (user) this.io.to(user.channel).emit('chat:mention', { from, roomId, text: body });
       pushService.notify(id, {
         type: 'chat',
         title: `${from} mentioned you in #${roomId}`,
@@ -219,8 +335,9 @@ export class ChatController {
   }
 
   /**
-   * Notifications for everyone in the room (including users whose app is closed), at most
-   * one per room every few seconds; the service worker skips it when the app is on screen.
+   * Notifications for everyone in the room (including users whose app is closed) who hasn't
+   * muted it, at most one per room every few seconds; the service worker skips it when the
+   * app is on screen.
    * Public chat posts (announcements) go to everyone, every time.
    * `skip`: lowercased IDs already notified (e.g. by a mention).
    */
@@ -228,7 +345,7 @@ export class ChatController {
     const body = text.length > 120 ? `${text.slice(0, 117)}…` : text;
     if (roomId === PUBLIC_ROOM_ID) {
       for (const id of pushSubscriptionModel.userIds()) {
-        if (id.toLowerCase() === from.toLowerCase() || skip.has(id.toLowerCase())) continue;
+        if (id.toLowerCase() === from.toLowerCase() || skip.has(id.toLowerCase()) || roomModel.isMuted(id, roomId)) continue;
         pushService.notify(id, {
           type: 'chat',
           title: `📢 Public chat · ${from}`,
@@ -241,7 +358,7 @@ export class ChatController {
     }
     const recipients = new Set([...roomModel.members(roomId), ...roomModel.followersOf(roomId)]);
     for (const member of recipients) {
-      if (member === from || skip.has(member.toLowerCase())) continue;
+      if (member === from || skip.has(member.toLowerCase()) || roomModel.isMuted(member, roomId)) continue;
       pushService.notify(
         member,
         { type: 'chat', title: `#${roomId} · ${from}`, body, tag: `chat-${roomId}`, url: `/app?room=${roomId}` },

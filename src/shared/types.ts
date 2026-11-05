@@ -51,7 +51,17 @@ export interface ChatMessage {
 }
 
 /** A row of our chat list: a room we've joined (or the Public chat), its last message and unread count. */
-export interface ChatRoomPreview {
+/** Our own choices for a room in our chat list (only we see them). */
+export interface RoomPrefs {
+  /** Kept at the top of the list. */
+  pinned?: boolean;
+  /** No push notifications for its messages (being @mentioned still notifies) and no unread badge. */
+  muted?: boolean;
+  /** Moved to the Archived section at the bottom of the list. */
+  archived?: boolean;
+}
+
+export interface ChatRoomPreview extends RoomPrefs {
   id: string;
   lastMessage?: ChatMessage;
   /** Messages from others since we last read the room. */
@@ -67,9 +77,10 @@ export interface Sticker {
 
 /**
  * "public": listed for everyone and anyone can join. "private": listed only for the
- * owner's friends, and only they (or people called into it) can join. "link": a permanent
- * room (its chat history is kept) that people join only through its invite link.
- * People a room is shared with can always join it.
+ * owner's friends, and only they (or people called into it) can join. "link": a room
+ * that's always listed for its members and that people join only through its invite link.
+ * People who joined a room, or had it shared with them, can always come back (unless banned).
+ * Every room keeps its chat history.
  */
 export type RoomVisibility = 'public' | 'private' | 'link';
 
@@ -186,6 +197,16 @@ export interface ClientToServerEvents {
     ack: Ack<{ roomId: string; history: ChatMessage[]; members: string[] }>,
   ) => void;
   'chat:leave': (payload: { roomId: string }) => void;
+  /**
+   * A room as it looks before joining: its listing and latest messages (`room` is null if
+   * the ID is free, so joining creates it). `key`: the invite key from a link.
+   */
+  'chat:preview': (
+    payload: { roomId: string; key?: string },
+    ack: Ack<{ room: RoomSummary | null; recent: ChatMessage[] }>,
+  ) => void;
+  /** Pins, mutes or archives a room in our chat list (fields left out stay as they were). */
+  'chat:prefs': (payload: { roomId: string } & RoomPrefs, ack: Ack) => void;
   /** Stops viewing a room's conversation (back to the chat list); we stay in the room. */
   'chat:close': (payload: { roomId: string }) => void;
   /** We've seen everything in this room so far (resets its unread count). */
@@ -201,6 +222,11 @@ export interface ClientToServerEvents {
   'rooms:set-visibility': (payload: { roomId: string; visibility: RoomVisibility }, ack: Ack) => void;
   /** Leaves a room for good: its chat, its notifications and our membership (a "link" room then needs the link again). */
   'rooms:leave': (payload: { roomId: string }, ack: Ack) => void;
+  /** A room we own: everyone who joined it (besides us) and everyone banned from it. */
+  'rooms:members': (payload: { roomId: string }, ack: Ack<{ members: string[]; banned: string[] }>) => void;
+  /** Takes someone out of a room we own; `ban` also keeps them from ever coming back. */
+  'rooms:remove-member': (payload: { roomId: string; userId: string; ban: boolean }, ack: Ack) => void;
+  'rooms:unban': (payload: { roomId: string; userId: string }, ack: Ack) => void;
   /** Deletes a room we own: its chat, history, members and settings (not while its call is on). */
   'rooms:delete': (payload: { roomId: string }, ack: Ack) => void;
   /** Shares a room with friends: they may join it from then on and get an invite (and a push). */
@@ -267,6 +293,8 @@ export interface ServerToClientEvents {
   'chat:mention': (payload: { from: string; roomId: string; text: string }) => void;
   /** The owner deleted this room; everyone in it has been moved out. */
   'chat:deleted': (payload: { roomId: string; by: string }) => void;
+  /** The owner took us out of this room (`banned`: and we can't come back). */
+  'chat:removed': (payload: { roomId: string; by: string; banned: boolean }) => void;
 
   /** A call of ours just ended (or was missed) and was added to the history. */
   'history:new': (entry: CallHistoryEntry) => void;
@@ -297,7 +325,8 @@ export interface SocketData {
 /** Error codes sent through Socket.IO's connect_error during the auth handshake. */
 export const CONNECT_ERRORS = {
   UNAUTHORIZED: 'UNAUTHORIZED',
-  ID_TAKEN: 'ID_TAKEN',
+  /** This ID is already open on as many devices as allowed. */
+  TOO_MANY_DEVICES: 'TOO_MANY_DEVICES',
 } as const;
 
 // ---- REST API ----
@@ -306,10 +335,21 @@ export interface AvailabilityResponse {
   valid: boolean;
   /** An account (ID + PIN) already exists for this ID. */
   registered: boolean;
-  /** Someone is currently signed in with this ID. */
+  /** Someone is signed in with this ID right now (on any device). */
   online: boolean;
   message: string;
 }
+
+// ---- Sign in with a QR code ----
+
+type ApiResult<T> = ({ ok: true } & T) | { ok: false; error: string };
+
+/** The new device's code: shown as a QR code (of `url`) and as text. */
+export type PairStartResponse = ApiResult<{ code: string; url: string; expiresAt: number }>;
+/** Polled by the new device; "approved" comes with its session cookie. */
+export type PairStatusResponse = ApiResult<{ status: 'pending' | 'expired' } | { status: 'approved'; userId: string }>;
+/** For the signed-in device: which browser is asking to be signed in, and since when. */
+export type PairInfoResponse = ApiResult<{ code: string; device: string; ageMs: number }>;
 
 // ---- Web Push ----
 

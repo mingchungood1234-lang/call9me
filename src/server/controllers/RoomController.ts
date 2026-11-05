@@ -67,11 +67,11 @@ export class RoomController {
       const sent: string[] = [];
       for (const raw of to) {
         const friend = friendModel.friendsOf(userId).find((f) => f.toLowerCase() === raw.toLowerCase());
-        if (!friend) continue; // only friends
+        if (!friend || roomSettingsModel.isBanned(settings, friend)) continue; // only friends, never banned people
         roomSettingsModel.addMember(settings, friend);
         const key = settings.visibility === 'link' ? settings.key : undefined;
         const online = userModel.find(friend);
-        if (online) this.io.to(online.socketId).emit('rooms:shared', { from: userId, roomId: settings.id, call, key });
+        if (online) this.io.to(online.channel).emit('rooms:shared', { from: userId, roomId: settings.id, call, key });
         const query = `${call ? 'call' : 'room'}=${settings.id}${key ? `&key=${key}` : ''}`;
         pushService.notify(friend, {
           type: 'chat',
