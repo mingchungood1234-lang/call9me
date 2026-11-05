@@ -19,6 +19,8 @@ export interface Call {
   participants: Set<string>;
   /** User IDs that are ringing and haven't answered yet. */
   invited: Map<string, PendingInvite>;
+  /** People who left a moment ago → until when they may rejoin (the call stays open for them). */
+  recent: Map<string, number>;
   createdAt: number;
 }
 
@@ -39,6 +41,7 @@ export class CallModel {
       video,
       participants: new Set([ownerId]),
       invited: new Map(),
+      recent: new Map(),
       createdAt: Date.now(),
     };
     this.calls.set(call.id, call);
@@ -63,6 +66,12 @@ export class CallModel {
   /** The call currently ringing this user (online or offline), if any. */
   findInviteFor(userId: string): Call | undefined {
     for (const call of this.calls.values()) if (call.invited.has(userId)) return call;
+    return undefined;
+  }
+
+  /** The call this user left a moment ago and may still rejoin, if any. */
+  findRejoinFor(userId: string): Call | undefined {
+    for (const call of this.calls.values()) if (call.recent.has(userId)) return call;
     return undefined;
   }
 

@@ -102,8 +102,15 @@ export function registerSocketHandlers(io: AppServer): void {
 
     // A call may be ringing for this user already (the app was opened from a call notification).
     const user = userModel.find(userId);
-    if (user) signaling.deliverPendingInvite(user, socket.id);
-    if (firstDevice) signaling.broadcastUsers(); // another device of someone online changes nothing for others
+    if (user) {
+      signaling.deliverPendingInvite(user, socket.id);
+      signaling.sendElsewhereTo(user, socket.id); // in a call on another device: offer to move it here
+      signaling.sendRejoinableTo(user, socket.id); // dropped out of a call a moment ago: offer to rejoin
+    }
+    // The people list (who's online, which offline friends can be rung): everyone needs it
+    // when we come online; another device of ours only needs it itself.
+    if (firstDevice) signaling.broadcastUsers();
+    else socket.emit('users:update', listDirectory());
 
     socket.on('disconnect', () => {
       const user = userModel.find(userId);

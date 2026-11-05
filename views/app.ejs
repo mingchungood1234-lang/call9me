@@ -29,6 +29,10 @@
           </span>
           <input id="avatar-file" type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden>
         </div>
+        <button id="link-device-btn" class="btn btn-primary btn-block link-device-btn" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3h7v7H3V3Zm2 2v3h3V5H5Zm9-2h7v7h-7V3Zm2 2v3h3V5h-3ZM3 14h7v7H3v-7Zm2 2v3h3v-3H5Zm9-2h2v2h-2v-2Zm2 2h2v2h-2v-2Zm2-2h3v2h-3v-2Zm-4 4h2v3h-2v-3Zm4 0h3v3h-2v-1h-1v-2Zm-2 2h2v1h-2v-1Z"/></svg>
+          <span>Scan QR to sign in a device</span>
+        </button>
         <p class="menu-heading">Status</p>
         <button type="button" role="menuitemradio" data-status="online" aria-checked="true">
           <span class="status-dot" data-status="online"></span>
@@ -58,9 +62,8 @@
           <button type="button" role="radio" data-text="normal" aria-checked="true">Normal text</button>
           <button type="button" role="radio" data-text="large" aria-checked="false">Large text</button>
         </div>
-        <p class="menu-heading">Account</p>
-        <button id="link-device-btn" class="menu-link" type="button" role="menuitem">Sign in another device<small>Scan the QR code it shows, or type its code</small></button>
         <% if (googleEnabled) { %>
+        <p class="menu-heading">Account</p>
         <% if (googleEmail) { %>
         <p class="menu-note">Google: <strong><%= googleEmail %></strong></p>
         <% } else { %>
@@ -173,6 +176,14 @@
         </span>
         <button id="copy-link-btn" class="btn btn-ghost btn-small" type="button">Invite</button>
       </div>
+      <!-- In a call on another of our devices: take it over here without hanging up -->
+      <div id="call-elsewhere" class="room-banner call-elsewhere" hidden>
+        <span class="room-banner-label">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17 1H7a2 2 0 0 0-2 2v18a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V3a2 2 0 0 0-2-2Zm0 18H7V5h10v14Z"/></svg>
+          <span id="call-elsewhere-text">In a call on another device</span>
+        </span>
+        <button id="move-call-btn" class="btn btn-primary btn-small" type="button">Move call here</button>
+      </div>
       <form id="dial-form" class="dial-form">
         <input id="target-id" type="text" maxlength="20" autocomplete="off" autocapitalize="off" spellcheck="false"
                placeholder="User ID to call" aria-label="User ID to call">
@@ -187,7 +198,19 @@
         <div id="remote-grid" class="remote-grid" data-count="0"></div>
         <div id="stage-placeholder" class="stage-placeholder"></div>
         <span id="call-timer" class="call-timer" role="timer" aria-label="Call duration" hidden>00:00</span>
-        <video id="local-video" class="local-video" autoplay playsinline muted hidden></video>
+        <!-- Our own camera: a corner preview; tap it to make it the big picture (tap again to go back). -->
+        <div id="local-tile" class="local-tile is-mirrored" role="button" tabindex="0" aria-label="Your camera. Tap to make it big." hidden>
+          <video id="local-video" class="local-video" autoplay playsinline muted></video>
+          <span class="tile-label local-label"><span class="tile-name">You</span></span>
+        </div>
+        <div class="stage-actions">
+          <button id="layout-btn" class="stage-btn" type="button" hidden title="Side by side" aria-label="Side by side">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5Zm2 0v14h6V5H5Zm8 0v14h6V5h-6Z"/></svg>
+          </button>
+          <button id="call-minimize-btn" class="stage-btn" type="button" hidden title="Minimize the call (it keeps going)" aria-label="Minimize the call">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.41 8.59 12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41Z"/></svg>
+          </button>
+        </div>
       </div>
 
       <div id="call-controls" class="call-controls" hidden>
@@ -205,6 +228,12 @@
             <svg class="icon-off" viewBox="0 0 24 24"><path d="M21 6.5 17 10.5V7c0-.55-.45-1-1-1H9.82L21 17.18V6.5ZM3.27 2 2 3.27 4.73 6H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.21 0 .39-.08.54-.18L19.73 21 21 19.73 3.27 2Z"/></svg>
           </span>
           <span class="ctrl-label">Camera</span>
+        </button>
+        <button id="flip-btn" class="ctrl-btn" type="button" hidden>
+          <span class="ctrl-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M20 5h-3.17L15 3H9L7.17 5H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2Zm-5 11.5V14H9v2.5L5.5 13 9 9.5V12h6V9.5l3.5 3.5-3.5 3.5Z"/></svg>
+          </span>
+          <span class="ctrl-label">Flip</span>
         </button>
         <button id="share-btn" class="ctrl-btn" type="button" aria-pressed="false" hidden>
           <span class="ctrl-icon" aria-hidden="true">
@@ -259,6 +288,12 @@
       </div>
     </section>
   </main>
+
+  <!-- Back to a minimized call, or take over a call from another device -->
+  <button id="call-return" class="call-return" type="button" hidden>
+    <span class="call-return-dot" aria-hidden="true"></span>
+    <span id="call-return-text">Return to call</span>
+  </button>
 
   <!-- Phone navigation -->
   <nav class="tabbar" aria-label="Sections">

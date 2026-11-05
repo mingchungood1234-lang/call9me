@@ -1,4 +1,4 @@
-import type { Ack, IceCandidate, PushPayload, SessionDescription } from '../../shared/types';
+import type { Ack, CallElsewhere, CallRejoin, IceCandidate, PushPayload, SessionDescription } from '../../shared/types';
 import { isValidRoomId, PUBLIC_ROOM_ID, ROOM_ID_RULES } from '../../shared/validation';
 import { config } from '../config';
 import { accountModel } from '../models/AccountModel';
@@ -61,6 +61,8 @@ function callPush(call: Call, from: string): PushPayload {
 export class SignalingController {
   /** "callId|userId" → ring timeout */
   private readonly inviteTimers = new Map<string, NodeJS.Timeout>();
+  /** "callId|userId" → end of the minute someone who left has to rejoin */
+  private readonly rejoinTimers = new Map<string, NodeJS.Timeout>();
 
   constructor(private readonly io: AppServer) {
     callHistory.onEntry = (userId, entry) => {
@@ -88,6 +90,10 @@ export class SignalingController {
       if (user) this.declineInvite(user.id, payload?.callId, reason, socket.id);
     });
     socket.on('call:leave', () => this.leave(inCallHere(), 'left'));
+    socket.on('call:move-here', (ack) => this.moveHere(me(), socket.id, safeAck(ack)));
+    socket.on('call:rejoin', (payload, ack) =>
+      this.rejoin(me(), socket.id, payload?.callId, payload?.video !== false, safeAck(ack)),
+    );
     socket.on('call:screen', (payload) => {
       const user = inCallHere();
       const call = user && callModel.get(user.callId);
@@ -135,6 +141,17 @@ export class SignalingController {
         this.declineInvite(user.id, user.invitedTo, 'disconnected');
       }
     }
+  }
+
+  /** A newly connected device learns about a call we dropped out of a moment ago, so it can rejoin. */
+  sendRejoinableTo(user: OnlineUser, socketId: string): void {
+    const call = callModel.findRejoinFor(user.id);
+    if (call && !user.callId) this.io.to(socketId).emit('call:rejoinable', this.rejoinInfo(call, user.id));
+  }
+
+  /** A newly connected device learns about the call we're in on another device, so it can take it over. */
+  sendElsewhereTo(user: OnlineUser, socketId: string): void {
+    if (user.callId && user.callSocketId !== socketId) this.io.to(socketId).emit('call:elsewhere', this.elsewhere(user));
   }
 
   /** On (re)connect, hand this device any call still ringing for this user — e.g. opened from a call notification. */
@@ -279,6 +296,7 @@ export class SignalingController {
     else call = callModel.create(user.id, video, payload.roomId);
     user.callId = call.id;
     user.callSocketId = socketId;
+    this.backFromAway(call, user.id);
     callHistory.join(call, user.id, video);
 
     const callId = call.id;
@@ -312,6 +330,7 @@ export class SignalingController {
     call.participants.add(user.id);
     user.callId = call.id;
     user.callSocketId = socketId;
+    this.backFromAway(call, user.id);
     callHistory.join(call, user.id, video);
     // Our other devices stop ringing.
     this.io.to(user.channel).except(socketId).emit('call:cancelled', { callId, reason: 'answered on another device' });
@@ -321,6 +340,107 @@ export class SignalingController {
     ack({ ok: true, callId, participants: existing, video: call.video });
     this.emitUpdate(call);
     this.broadcastUsers();
+  }
+
+  /**
+   * Hands our call to this device: the device that had it is told to drop out without
+   * leaving, and everyone else drops their connection to it and takes offers from here.
+   */
+  private moveHere(user: OnlineUser | undefined, socketId: string, ack: Ack<CallElsewhere>): void {
+    const call = user && callModel.get(user.callId);
+    if (!user || !call) return ack({ ok: false, error: 'There is no call to move here' });
+    if (user.callSocketId === socketId) return ack({ ok: false, error: 'The call is already on this device' });
+
+    const previous = user.callSocketId;
+    user.callSocketId = socketId;
+    if (previous) this.io.to(previous).emit('call:moved', { callId: call.id });
+    this.eachParticipant(
+      call,
+      (p) => this.io.to(userModel.callTarget(p)).emit('call:peer-moved', { callId: call.id, userId: user.id }),
+      user.id,
+    );
+    ack({ ok: true, ...this.elsewhere(user)! });
+    this.emitUpdate(call); // also tells the old device the call is now "elsewhere", so it can take it back
+  }
+
+  /** Back into a call left less than a minute ago: like accepting, the newcomer sends the offers. */
+  private rejoin(
+    user: OnlineUser | undefined,
+    socketId: string,
+    callId: unknown,
+    video: boolean,
+    ack: Ack<CallElsewhere>,
+  ): void {
+    const call = typeof callId === 'string' ? callModel.get(callId) : undefined;
+    if (!user || !call || !call.recent.has(user.id)) return ack({ ok: false, error: 'That call is over' });
+    if (user.callId || user.invitedTo) return ack({ ok: false, error: 'Leave your current call first' });
+    if (callModel.size(call) >= config.maxCallParticipants) {
+      return ack({ ok: false, error: `Calls are limited to ${config.maxCallParticipants} people` });
+    }
+    this.clearRejoinTimer(call.id, user.id);
+    call.recent.delete(user.id);
+    const existing = [...call.participants];
+    call.participants.add(user.id);
+    user.callId = call.id;
+    user.callSocketId = socketId;
+    this.backFromAway(call, user.id);
+    callHistory.join(call, user.id, video); // their history entry was kept open, so it stays one call
+
+    this.eachParticipant(call, (p) => this.io.to(userModel.callTarget(p)).emit('call:peer-joined', { callId: call.id, userId: user.id }), user.id);
+    ack({ ok: true, callId: call.id, roomId: call.roomId, participants: existing, video: call.video });
+    this.io.to(user.channel).emit('call:rejoinable', { ...this.rejoinInfo(call, user.id), until: 0 });
+    this.emitUpdate(call);
+    this.broadcastUsers();
+  }
+
+  /** `user` just left `call` (others are still in it): it waits a minute for them to come back. */
+  private allowRejoin(call: Call, user: OnlineUser): void {
+    const until = Date.now() + config.rejoinWindowMs;
+    call.recent.set(user.id, until);
+    const callId = call.id;
+    this.clearRejoinTimer(callId, user.id);
+    this.rejoinTimers.set(`${callId}|${user.id}`, setTimeout(() => this.expireRejoin(callId, user.id), config.rejoinWindowMs));
+    this.io.to(user.channel).emit('call:rejoinable', this.rejoinInfo(call, user.id));
+  }
+
+  /** Their minute is up: the call is over for them (and ends if that leaves someone alone). */
+  private expireRejoin(callId: string, userId: string): void {
+    this.rejoinTimers.delete(`${callId}|${userId}`);
+    const call = callModel.get(callId);
+    if (!call?.recent.delete(userId)) return;
+    callHistory.finish(callId, userId, 'cancelled');
+    this.tellRejoinOver(call, userId);
+    if (!this.endIfEmpty(call)) this.emitUpdate(call);
+    this.broadcastUsers();
+  }
+
+  private rejoinInfo(call: Call, userId: string): CallRejoin {
+    return {
+      callId: call.id,
+      roomId: call.roomId,
+      participants: [...call.participants].filter((p) => p !== userId),
+      video: call.video,
+      until: call.recent.get(userId) ?? 0,
+    };
+  }
+
+  private tellRejoinOver(call: Call, userId: string): void {
+    const user = userModel.find(userId);
+    if (user) this.io.to(user.channel).emit('call:rejoinable', { ...this.rejoinInfo(call, userId), until: 0 });
+  }
+
+  /** Back in a call they'd just left (by its room ID, or a new invite): stop waiting for them. */
+  private backFromAway(call: Call, userId: string): void {
+    if (!call.recent.delete(userId)) return;
+    this.clearRejoinTimer(call.id, userId);
+    this.tellRejoinOver(call, userId);
+  }
+
+  private clearRejoinTimer(callId: string, userId: string): void {
+    const key = `${callId}|${userId}`;
+    const timer = this.rejoinTimers.get(key);
+    if (timer) clearTimeout(timer);
+    this.rejoinTimers.delete(key);
   }
 
   private expireInvite(callId: string, userId: string): void {
@@ -348,12 +468,16 @@ export class SignalingController {
     const call = callModel.get(user.callId);
     user.callId = null;
     user.callSocketId = null;
+    this.sendElsewhere(user);
     if (call) {
       call.participants.delete(user.id);
-      callHistory.finish(call.id, user.id, 'cancelled');
       this.eachParticipant(call, (p) =>
         this.io.to(userModel.callTarget(p)).emit('call:peer-left', { callId: call.id, userId: user.id, reason }),
       );
+      // Others are still there: they wait a minute in case we come back (dropped connection,
+      // wrong button). Our history entry stays open until then.
+      if (call.participants.size > 0) this.allowRejoin(call, user);
+      else callHistory.finish(call.id, user.id, 'cancelled');
       if (!this.endIfEmpty(call)) this.emitUpdate(call);
     }
     this.broadcastUsers();
@@ -366,7 +490,8 @@ export class SignalingController {
    * @returns whether the call was ended.
    */
   private endIfEmpty(call: Call): boolean {
-    const alone = call.roomId === null && call.participants.size === 1 && call.invited.size === 0;
+    // Someone who just left may still come back: an invite-only call waits for them.
+    const alone = call.roomId === null && call.participants.size === 1 && call.invited.size === 0 && call.recent.size === 0;
     if (call.participants.size > 0 && !alone) return false;
 
     for (const id of call.participants) callHistory.finish(call.id, id, 'unanswered');
@@ -374,7 +499,14 @@ export class SignalingController {
       this.io.to(userModel.callTarget(p)).emit('call:ended', { callId: call.id, reason: 'everyone else left' });
       p.callId = null;
       p.callSocketId = null;
+      this.sendElsewhere(p);
     });
+    for (const userId of call.recent.keys()) {
+      this.clearRejoinTimer(call.id, userId);
+      callHistory.finish(call.id, userId, 'cancelled');
+      this.tellRejoinOver(call, userId);
+    }
+    call.recent.clear();
     for (const [userId, invite] of call.invited) {
       this.clearInviteTimer(call.id, userId);
       callHistory.finish(call.id, userId, 'missed');
@@ -412,9 +544,27 @@ export class SignalingController {
       roomId: call.roomId,
       participants: [...call.participants],
       invited: [...call.invited.keys()],
+      away: [...call.recent.keys()],
       video: call.video,
     };
-    this.eachParticipant(call, (p) => this.io.to(userModel.callTarget(p)).emit('call:update', state));
+    this.eachParticipant(call, (p) => {
+      this.io.to(userModel.callTarget(p)).emit('call:update', state);
+      this.sendElsewhere(p);
+    });
+  }
+
+  /** The call `user` is in, as their other devices see it (null: none). */
+  private elsewhere(user: OnlineUser): CallElsewhere | null {
+    const call = callModel.get(user.callId);
+    if (!call) return null;
+    return { callId: call.id, roomId: call.roomId, participants: [...call.participants].filter((p) => p !== user.id), video: call.video };
+  }
+
+  /** Keeps the user's other devices (those not in the call) told about the call they're in. */
+  private sendElsewhere(user: OnlineUser): void {
+    if (user.sockets.size < 2 && user.callSocketId) return; // no other device to tell
+    const others = user.callSocketId ? this.io.to(user.channel).except(user.callSocketId) : this.io.to(user.channel);
+    others.emit('call:elsewhere', this.elsewhere(user));
   }
 
   private clearInviteTimer(callId: string, userId: string): void {

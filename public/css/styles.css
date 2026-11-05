@@ -292,7 +292,9 @@ input:disabled { opacity: 0.5; }
 .menu-link { display: grid; padding: 9px 10px; border-radius: 10px; color: var(--text); font-weight: 500; text-decoration: none; }
 .menu-link:hover { background: var(--bg-hover); }
 .menu-link small { color: var(--muted); font-weight: 400; font-size: 0.75rem; }
-button.menu-link { width: 100%; border: 0; background: none; text-align: left; font: inherit; font-weight: 500; cursor: pointer; }
+/* Settings → "Scan QR to sign in a device": a real, easy-to-hit button. */
+.settings-menu .link-device-btn { margin: 2px 4px 6px; width: auto; min-height: 44px; }
+.link-device-btn svg { width: 20px; height: 20px; fill: currentColor; flex: none; }
 
 /* ==========================================================================
    Landing
@@ -754,6 +756,9 @@ body.app .update-banner { bottom: calc(var(--tabbar-h) + 12px + env(safe-area-in
 .link-step[hidden] { display: none; }
 .link-camera { position: relative; aspect-ratio: 1; border-radius: 14px; overflow: hidden; background: #000; }
 .link-video { width: 100%; height: 100%; object-fit: cover; }
+/* Where to hold the code: the middle 75% (the JS decoder looks there first). */
+.link-viewfinder { position: absolute; inset: 12.5%; border: 3px solid rgba(255, 255, 255, 0.9); border-radius: 16px; box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.35); pointer-events: none; }
+.link-camera-note { min-height: 1.2em; }
 .link-confirm { margin: 0; line-height: 1.45; }
 .link-warning { color: var(--error-text); }
 .link-dialog input { text-transform: uppercase; letter-spacing: 0.08em; }
@@ -1021,7 +1026,8 @@ body.in-call .call-status { background: var(--primary-soft); color: var(--primar
 .stage.has-screen .remote-grid[data-count='1'] { grid-template-rows: minmax(0, 1fr); }
 .tile.is-sharing video { object-fit: contain; }
 
-.local-video {
+/* Our own camera: a corner preview (tap it to make it the big picture). */
+.local-tile {
   position: absolute;
   right: 14px;
   bottom: 14px;
@@ -1029,16 +1035,139 @@ body.in-call .call-status { background: var(--primary-soft); color: var(--primar
   max-width: 210px;
   min-width: 96px;
   aspect-ratio: 4 / 3;
-  object-fit: cover;
   border-radius: 12px;
   border: 2px solid rgba(255, 255, 255, 0.18);
+  overflow: hidden;
   background: #000;
-  transform: scaleX(-1);
   z-index: 2;
   box-shadow: 0 12px 30px rgba(0, 0, 0, 0.45);
+  cursor: pointer;
+  transition: border-color 0.15s;
 }
-.local-video.is-screen { transform: none; object-fit: contain; }
-.stage.has-screen .local-video { bottom: 112px; }
+.local-tile[hidden] { display: none; }
+.local-tile:hover, .local-tile:focus-visible { border-color: rgba(255, 255, 255, 0.55); outline: none; }
+.local-video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.local-tile.is-mirrored .local-video { transform: scaleX(-1); }
+.local-video.is-screen { object-fit: contain; }
+.local-label { display: none; }
+.stage.has-screen .local-tile { bottom: 112px; }
+
+/* Our camera as the big picture: the others shrink to the corner (tap one to go back). */
+.stage.self-focus .local-tile {
+  inset: 0;
+  width: auto;
+  max-width: none;
+  min-width: 0;
+  aspect-ratio: auto;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  z-index: 1;
+}
+.stage.self-focus .remote-grid {
+  inset: auto 14px 14px auto;
+  width: min(28%, 220px);
+  min-width: 96px;
+  max-height: calc(100% - 28px);
+  padding: 0;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: none;
+  grid-auto-flow: row;
+  grid-auto-rows: auto;
+  overflow-y: auto;
+  z-index: 2;
+}
+.stage.self-focus .tile { aspect-ratio: 4 / 3; border: 2px solid rgba(255, 255, 255, 0.18); box-shadow: 0 12px 30px rgba(0, 0, 0, 0.45); cursor: pointer; }
+.stage.self-focus .tile-avatar { width: 40%; font-size: 1.1rem; }
+.stage.self-focus .local-label, .stage.layout-split .local-label { display: flex; }
+
+/* Two people, both cameras on: equal halves, side by side (one above the other on a tall screen). */
+.stage.layout-split .remote-grid { right: 50%; padding-right: 4px; }
+.stage.layout-split .local-tile {
+  inset: 8px 8px 8px calc(50% + 4px);
+  width: auto;
+  max-width: none;
+  min-width: 0;
+  aspect-ratio: auto;
+  border: 0;
+  box-shadow: none;
+}
+@media (orientation: portrait) {
+  .stage.layout-split .remote-grid { right: 0; bottom: 50%; padding-right: 8px; padding-bottom: 4px; }
+  .stage.layout-split .local-tile { inset: calc(50% + 4px) 8px 8px 8px; }
+}
+
+/* Layout and minimize buttons, top right of the call. */
+.stage-actions { position: absolute; top: 10px; right: 10px; z-index: 4; display: flex; gap: 6px; }
+.stage-btn {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border: 0;
+  border-radius: 11px;
+  background: var(--overlay);
+  color: #fff;
+  cursor: pointer;
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+}
+.stage-btn[hidden] { display: none; }
+.stage-btn svg { width: 22px; height: 22px; fill: currentColor; }
+.stage-btn:hover, .stage-btn.active { background: rgba(255, 255, 255, 0.28); }
+/* Tiles' own full-screen buttons go bottom right, clear of the stage buttons above. */
+.tile-fullscreen { top: auto; bottom: 8px; }
+.tile-label { max-width: calc(100% - 58px); }
+
+/* ---------- Full-screen call ---------- */
+/* In a call the call covers the whole app; "minimize" (⌄) goes back to the app while it goes on. */
+body.in-call:not(.call-minimized) .call-panel {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex !important;
+  flex-direction: column;
+  gap: 8px;
+  height: auto;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  padding: max(10px, env(safe-area-inset-top)) max(10px, env(safe-area-inset-right)) max(10px, env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left));
+  background: var(--bg);
+  animation: none;
+}
+body.in-call:not(.call-minimized) .call-panel .stage { flex: 1; min-height: 0; }
+body.in-call:not(.call-minimized) { overflow: hidden; }
+
+/* Floating pill: back to a minimized call, rejoin one we just left, or move one here from another device. */
+.call-return {
+  position: fixed;
+  top: max(10px, env(safe-area-inset-top));
+  left: 50%;
+  z-index: 45;
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: calc(100vw - 32px);
+  padding: 8px 16px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--success, #16a34a);
+  color: #fff;
+  font: inherit;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  box-shadow: var(--shadow-lg);
+  cursor: pointer;
+  animation: rise 0.25s ease-out;
+}
+.call-return[hidden] { display: none; }
+.call-return.is-elsewhere { background: var(--primary); color: var(--on-primary); }
+.call-return-dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; flex: none; animation: pulse 1.6s ease-in-out infinite; }
+.call-elsewhere { background: var(--primary-soft); }
 
 .call-controls {
   display: flex;
@@ -1439,11 +1568,11 @@ html.standalone :is(input, textarea, .msg-text, .room-banner-label) { -webkit-us
 
   .remote-grid[data-count='2'] { --cols: 1; }
   .remote-grid[data-count='5'], .remote-grid[data-count='6'] { --cols: 2; }
-  .local-video { width: 28%; min-width: 84px; right: 10px; bottom: 10px; border-radius: 10px; }
+  .local-tile { width: 28%; min-width: 84px; right: 10px; bottom: 10px; border-radius: 10px; }
 
   /* Phones only watch a screen share: show just the shared screen, full stage. */
   .stage.has-screen .tile:not(.is-sharing),
-  .stage.has-screen .local-video { display: none; }
+  .stage.has-screen .local-tile { display: none; }
   .stage.has-screen .remote-grid { grid-template-rows: minmax(0, 1fr); padding: 0; }
   .tile-fullscreen { opacity: 1; }
 

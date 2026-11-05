@@ -1,7 +1,9 @@
-import type { IceCandidate } from '../../shared/types';
+import type { CallElsewhere, CallRejoin, IceCandidate } from '../../shared/types';
 import { NOT_CONNECTED, withTimeout, type AppSocket } from './socket';
 
 export type CallState = 'idle' | 'incoming' | 'in-call';
+/** Front camera ("user", shown mirrored) or back camera ("environment"). */
+export type CameraFacing = 'user' | 'environment';
 
 export interface CallInfo {
   state: CallState;
@@ -13,6 +15,8 @@ export interface CallInfo {
   participants: string[];
   /** Users still ringing. */
   invited: string[];
+  /** People who left a moment ago; the call waits a minute for them to rejoin. */
+  away: string[];
   /** Set while state is "incoming". */
   incomingFrom: string | null;
 }
@@ -29,6 +33,12 @@ export interface CallEvents {
   onPeerCamera(peerId: string, on: boolean): void;
   onLocalScreen(sharing: boolean): void;
   onIncoming(from: string, video: boolean, participants: string[], roomId: string | null): void;
+  /** A call we just left can still be rejoined (until `call.until`), or not any more (null). */
+  onRejoinable(call: CallRejoin | null): void;
+  /** We're in a call on another of our devices (null: not any more); it can be moved here. */
+  onElsewhere(call: CallElsewhere | null): void;
+  /** The camera switched between front ("user") and back ("environment"). */
+  onFacingChange(facing: CameraFacing): void;
   onNotice(message: string, kind?: 'info' | 'success' | 'error'): void;
 }
 
@@ -56,6 +66,7 @@ export const IDLE_CALL: CallInfo = {
   video: true,
   participants: [],
   invited: [],
+  away: [],
   incomingFrom: null,
 };
 const IDLE = IDLE_CALL;
@@ -85,6 +96,16 @@ export class CallManager {
   private session = 0;
   /** Set while accepting, so a second tap (or auto-answer) can't accept twice. */
   private accepting = false;
+  /** Which camera we use; kept across calls. */
+  private facing: CameraFacing = 'user';
+  /** Set while the camera is being flipped, so taps can't overlap. */
+  private flipping = false;
+  /** The call we're in on another of our devices, if any. */
+  private elsewhereCall: CallElsewhere | null = null;
+  /** A call we left a moment ago that we can still rejoin. */
+  private rejoinCall: CallRejoin | null = null;
+  /** The call we were in when the connection dropped, to rejoin automatically once it's back. */
+  private dropped: { callId: string; video: boolean } | null = null;
 
   constructor(
     private readonly socket: AppSocket,
@@ -203,15 +224,56 @@ export class CallManager {
   }
 
   hangUp(): void {
+    this.dropped = null;
     if (this.info.state === 'idle') return;
     if (this.info.state === 'incoming') return this.rejectIncoming();
     if (this.info.callId) this.socket.emit('call:leave');
     this.cleanup();
   }
 
-  /** Ends the call locally without notifying the server (e.g. after a disconnect). */
+  /**
+   * Ends the call locally without notifying the server (e.g. after a disconnect). The
+   * server keeps the call open a minute for us, so we rejoin by ourselves on reconnect.
+   */
   reset(): void {
+    if (this.info.state === 'in-call' && this.info.callId) this.dropped = { callId: this.info.callId, video: this.isCameraOn };
     if (this.info.state !== 'idle') this.cleanup();
+  }
+
+  /** A call we left less than a minute ago, if any (see `rejoin`). */
+  get rejoinable(): CallRejoin | null {
+    return this.rejoinCall;
+  }
+
+  /** Back into the call we just left (`video`: camera on). */
+  async rejoin(video: boolean): Promise<void> {
+    const call = this.rejoinCall;
+    if (!call || this.info.state !== 'idle') return;
+    if (!this.socket.connected) {
+      this.events.onNotice(NOT_CONNECTED, 'error');
+      return;
+    }
+    const session = this.session;
+    this.setInfo({ ...IDLE, state: 'in-call', callId: call.callId, roomId: call.roomId, video, participants: call.participants });
+
+    const stream = await this.acquireMedia(video);
+    if (session !== this.session) {
+      stream?.getTracks().forEach((t) => t.stop());
+      return;
+    }
+    this.setLocalStream(stream);
+
+    this.socket.emit('call:rejoin', { callId: call.callId, video }, this.callAck(session, (res) => {
+      this.setRejoinable(null);
+      this.setInfo({ ...this.info, callId: res.callId, roomId: res.roomId, participants: res.participants });
+      for (const peerId of res.participants) void this.connectTo(peerId);
+      this.events.onNotice('Back in the call.', 'success');
+    }));
+  }
+
+  private setRejoinable(call: CallRejoin | null): void {
+    this.rejoinCall = call;
+    this.events.onRejoinable(call);
   }
 
   /** @returns whether the microphone is now enabled. */
@@ -245,7 +307,7 @@ export class CallManager {
     const session = this.session;
     let track: MediaStreamTrack | undefined;
     try {
-      track = (await navigator.mediaDevices.getUserMedia({ video: true })).getVideoTracks()[0];
+      track = (await this.openCamera(this.facing)) ?? undefined;
     } catch (err) {
       console.warn('Camera unavailable', err);
       this.events.onNotice('Could not turn on the camera. Check that it is allowed and not in use.', 'error');
@@ -304,7 +366,123 @@ export class CallManager {
     this.events.onLocalScreen(false);
   }
 
+  /** The call we're in on another of our devices, if any (see `moveHere`). */
+  get elsewhere(): CallElsewhere | null {
+    return this.elsewhereCall;
+  }
+
+  /**
+   * Takes over the call we're in on another of our devices: nobody sees us leave. The
+   * other device drops out, and we connect to everyone from here (`video`: camera on).
+   */
+  async moveHere(video: boolean): Promise<void> {
+    const call = this.elsewhereCall;
+    if (!call || this.info.state !== 'idle') return;
+    if (!this.socket.connected) {
+      this.events.onNotice(NOT_CONNECTED, 'error');
+      return;
+    }
+    const session = this.session;
+    this.setInfo({ ...IDLE, state: 'in-call', callId: call.callId, roomId: call.roomId, video, participants: call.participants });
+
+    const stream = await this.acquireMedia(video);
+    if (session !== this.session) {
+      stream?.getTracks().forEach((t) => t.stop());
+      return;
+    }
+    this.setLocalStream(stream);
+
+    this.socket.emit('call:move-here', withTimeout((res) => {
+      if (session !== this.session) return;
+      if (!res.ok) {
+        this.events.onNotice(res.error, 'error');
+        this.cleanup();
+        return;
+      }
+      this.setElsewhere(null);
+      this.setInfo({ ...this.info, callId: res.callId, roomId: res.roomId, participants: res.participants });
+      for (const peerId of res.participants) void this.connectTo(peerId);
+      // Everyone dropped our old connection: tell them what this device sends.
+      this.socket.emit('call:camera', { on: this.isCameraOn });
+      this.events.onNotice('The call is on this device now.', 'success');
+    }));
+  }
+
+  get cameraFacing(): CameraFacing {
+    return this.facing;
+  }
+
+  /** Whether there's more than one camera to switch between (phones; some laptops with a webcam). */
+  async canFlipCamera(): Promise<boolean> {
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      return devices.filter((d) => d.kind === 'videoinput').length > 1;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Switches between the front and back camera mid-call: the new track replaces the old
+   * one on every connection, with no renegotiation. The old camera is released first,
+   * since many phones can't open both at once. @returns whether it switched.
+   */
+  async flipCamera(): Promise<boolean> {
+    const current = this.cameraTrack();
+    if (this.state !== 'in-call' || !current || this.screenTrack || this.flipping) return false;
+    this.flipping = true;
+    const session = this.session;
+    const next: CameraFacing = this.facing === 'user' ? 'environment' : 'user';
+    const previousDevice = current.getSettings().deviceId;
+    current.stop();
+    try {
+      let track = await this.openCamera(next).catch(() => null);
+      // No camera facing that way (e.g. two webcams): take whichever other camera there is.
+      if (!track || (previousDevice && track.getSettings().deviceId === previousDevice)) {
+        track?.stop();
+        track = await this.otherCamera(previousDevice);
+      }
+      if (!track) {
+        // Nothing else to switch to: get the old camera back.
+        track = await this.openCamera(this.facing).catch(() => null);
+        if (track && session === this.session) this.setCameraTrack(track, false);
+        else track?.stop();
+        this.events.onNotice('Could not switch the camera.', 'error');
+        return false;
+      }
+      if (session !== this.session) {
+        track.stop();
+        return false;
+      }
+      this.facing = (track.getSettings().facingMode as CameraFacing | undefined) ?? next;
+      this.setCameraTrack(track, false);
+      this.events.onFacingChange(this.facing);
+      return true;
+    } finally {
+      this.flipping = false;
+    }
+  }
+
   // ---- Internals ----
+
+  private async openCamera(facing: CameraFacing): Promise<MediaStreamTrack | null> {
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: facing } } });
+    return stream.getVideoTracks()[0] ?? null;
+  }
+
+  /** Any camera other than `deviceId`. */
+  private async otherCamera(deviceId: string | undefined): Promise<MediaStreamTrack | null> {
+    const cameras = (await navigator.mediaDevices.enumerateDevices().catch(() => [])).filter((d) => d.kind === 'videoinput');
+    const other = cameras.find((d) => d.deviceId && d.deviceId !== deviceId);
+    if (!other) return null;
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { deviceId: { exact: other.deviceId } } }).catch(() => null);
+    return stream?.getVideoTracks()[0] ?? null;
+  }
+
+  private setElsewhere(call: CallElsewhere | null): void {
+    this.elsewhereCall = call;
+    this.events.onElsewhere(call);
+  }
 
   /**
    * Ack for a request that starts or joins a call. It is ignored if the user hung up
@@ -338,8 +516,8 @@ export class CallManager {
     return this.localStream?.getVideoTracks()[0] ?? null;
   }
 
-  /** Replaces the local camera (null = off) and tells the peers. */
-  private setCameraTrack(track: MediaStreamTrack | null): void {
+  /** Replaces the local camera (null = off) and tells the peers (unless only the camera changed, `announce` false). */
+  private setCameraTrack(track: MediaStreamTrack | null, announce = true): void {
     const audio = this.localStream?.getAudioTracks() ?? [];
     // A new stream object, so the preview <video> picks up the change.
     this.localStream = new MediaStream(track ? [...audio, track] : audio);
@@ -347,7 +525,7 @@ export class CallManager {
       void this.replaceOutgoingVideo(track);
       this.events.onLocalStream(this.localStream, false);
     }
-    this.socket.emit('call:camera', { on: track !== null });
+    if (announce) this.socket.emit('call:camera', { on: track !== null });
   }
 
   private async replaceOutgoingVideo(track: MediaStreamTrack | null): Promise<void> {
@@ -385,17 +563,51 @@ export class CallManager {
       this.cleanup();
     });
 
-    this.socket.on('call:update', ({ callId, roomId, participants, invited }) => {
+    this.socket.on('call:update', ({ callId, roomId, participants, invited, away }) => {
       if (this.info.state !== 'in-call' || callId !== this.info.callId) return;
       const others = participants.filter((p) => p !== this.selfId);
       // Keep our own `video` choice: in call rooms each person picks camera or audio-only.
-      this.setInfo({ ...this.info, roomId, participants: others, invited });
+      this.setInfo({ ...this.info, roomId, participants: others, invited, away: away ?? [] });
+    });
+
+    this.socket.on('call:rejoinable', (call) => {
+      if (call.until === 0) {
+        if (this.rejoinCall?.callId === call.callId) this.setRejoinable(null);
+        if (this.dropped?.callId === call.callId) this.dropped = null;
+        return;
+      }
+      this.setRejoinable(call);
+      // We only dropped out (connection lost): go straight back in, as we were.
+      const dropped = this.dropped;
+      this.dropped = null;
+      if (dropped?.callId === call.callId && this.info.state === 'idle') void this.rejoin(dropped.video);
     });
 
     this.socket.on('call:peer-joined', ({ callId, userId }) => {
       if (callId !== this.info.callId) return;
       this.events.onNotice(`${userId} joined the call.`, 'success');
       // Let the newcomer know we're sharing (their offer to us will arrive shortly).
+      if (this.screenTrack) this.socket.emit('call:screen', { sharing: true });
+      if (!this.isCameraOn) this.socket.emit('call:camera', { on: false });
+    });
+
+    this.socket.on('call:elsewhere', (call) => {
+      // While we're in it here, the call isn't "elsewhere" (a late update after moving it here).
+      this.setElsewhere(call && call.callId === this.info.callId && this.info.state === 'in-call' ? null : call);
+    });
+
+    // We moved this call to another of our devices: drop out here without leaving it.
+    this.socket.on('call:moved', ({ callId }) => {
+      if (callId !== this.info.callId || this.info.state !== 'in-call') return;
+      this.events.onNotice('Your call moved to another device.');
+      this.cleanup();
+    });
+
+    // Someone switched devices: their new device sends us an offer next.
+    this.socket.on('call:peer-moved', ({ callId, userId }) => {
+      if (callId !== this.info.callId) return;
+      this.removePeer(userId);
+      this.events.onNotice(`${userId} switched devices.`);
       if (this.screenTrack) this.socket.emit('call:screen', { sharing: true });
       if (!this.isCameraOn) this.socket.emit('call:camera', { on: false });
     });
@@ -584,7 +796,7 @@ export class CallManager {
       return null;
     }
     try {
-      return await navigator.mediaDevices.getUserMedia({ audio: true, video });
+      return await navigator.mediaDevices.getUserMedia({ audio: true, video: video ? { facingMode: { ideal: this.facing } } : false });
     } catch (err) {
       if (video) {
         try {

@@ -119,12 +119,28 @@ export interface CustomEmoji {
   url: string;
 }
 
+/** A call we're in on another of our devices (it can be moved to this one). */
+export interface CallElsewhere {
+  callId: string;
+  roomId: string | null;
+  /** The other people in it. */
+  participants: string[];
+  video: boolean;
+}
+
+/** A call we just left (or dropped out of): we can rejoin it until `until` (0: not any more). */
+export interface CallRejoin extends CallElsewhere {
+  until: number;
+}
+
 export interface CallUpdate {
   callId: string;
   /** Set for call rooms (joined by room ID); null for invite-only calls. */
   roomId: string | null;
   participants: string[];
   invited: string[];
+  /** People who left a moment ago and can still rejoin (the call waits for them). */
+  away: string[];
   video: boolean;
 }
 
@@ -182,6 +198,13 @@ export interface ClientToServerEvents {
   ) => void;
   'call:reject': (payload: { callId: string; reason?: string }) => void;
   'call:leave': () => void;
+  /**
+   * Moves the call we're in on another device to this one, without leaving it: the other
+   * device drops out quietly, and we send offers to everyone in the ack.
+   */
+  'call:move-here': (ack: Ack<CallElsewhere>) => void;
+  /** Back into a call we left less than a minute ago (see `call:rejoinable`). */
+  'call:rejoin': (payload: { callId: string; video: boolean }, ack: Ack<CallElsewhere>) => void;
   /** Tells the other participants whether our outgoing video is currently a screen share. */
   'call:screen': (payload: { sharing: boolean }) => void;
   /** Tells the other participants whether our camera is on (so they can show our avatar instead). */
@@ -278,6 +301,14 @@ export interface ServerToClientEvents {
   'call:rejected': (payload: { callId: string; from: string; reason: string }) => void;
   /** The call is over for us (nobody else left). */
   'call:ended': (payload: { callId: string; reason: string }) => void;
+  /** We left (or dropped out of) a call that waits a minute for us to come back; `until: 0` once it doesn't. */
+  'call:rejoinable': (payload: CallRejoin) => void;
+  /** To our other devices: the call we're in elsewhere, or null once we're in none. */
+  'call:elsewhere': (payload: CallElsewhere | null) => void;
+  /** To the device that had our call: it moved to another of our devices (don't send call:leave). */
+  'call:moved': (payload: { callId: string }) => void;
+  /** Someone in our call switched devices: drop the old connection; offers from the new device follow. */
+  'call:peer-moved': (payload: { callId: string; userId: string }) => void;
   'call:screen': (payload: { from: string; sharing: boolean }) => void;
   'call:camera': (payload: { from: string; on: boolean }) => void;
 

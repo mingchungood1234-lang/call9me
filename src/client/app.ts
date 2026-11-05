@@ -49,6 +49,15 @@ const stage = $('#stage');
 const remoteGrid = $('#remote-grid');
 const stagePlaceholder = $('#stage-placeholder');
 const localVideo = $<HTMLVideoElement>('#local-video');
+const localTile = $('#local-tile');
+const layoutBtn = $<HTMLButtonElement>('#layout-btn');
+const minimizeBtn = $<HTMLButtonElement>('#call-minimize-btn');
+const flipBtn = $<HTMLButtonElement>('#flip-btn');
+const elsewhereBanner = $('#call-elsewhere');
+const elsewhereText = $('#call-elsewhere-text');
+const moveCallBtn = $<HTMLButtonElement>('#move-call-btn');
+const callReturn = $<HTMLButtonElement>('#call-return');
+const callReturnText = $('#call-return-text');
 const callStatus = $('#call-status');
 const callControls = $('#call-controls');
 const micBtn = $<HTMLButtonElement>('#mic-btn');
@@ -558,7 +567,152 @@ function layoutStage(): void {
     refreshTileVideo(peerId);
   }
   stagePlaceholder.hidden = tiles.size > 0;
+  applyLayout();
 }
+
+// ---- Call layout ----
+// One other person and both cameras on: side by side (or one above the other on a portrait
+// screen), unless switched to picture-in-picture. Tapping our own preview makes it the big
+// picture (the others shrink to the corner); tapping again, or tapping someone, goes back.
+const LAYOUT_KEY = 'call9me:callLayout';
+let layoutPref: 'split' | 'pip' = 'split';
+try {
+  if (localStorage.getItem(LAYOUT_KEY) === 'pip') layoutPref = 'pip';
+} catch {
+  /* storage unavailable: default layout */
+}
+let selfFocus = false;
+let localIsScreen = false;
+
+function localHasCamera(): boolean {
+  const stream = localVideo.srcObject as MediaStream | null;
+  return !localTile.hidden && !localIsScreen && (stream?.getVideoTracks().some((t) => t.readyState === 'live') ?? false);
+}
+
+function applyLayout(): void {
+  const inCall = callsInfo?.state === 'in-call';
+  const only = tiles.size === 1 ? [...tiles.values()][0] : undefined;
+  const canSplit = inCall && !!only && only.root.classList.contains('has-video') && localHasCamera() && sharingPeers.size === 0;
+  if (localTile.hidden || sharingPeers.size > 0) selfFocus = false;
+  const split = canSplit && !selfFocus && layoutPref === 'split';
+  stage.classList.toggle('self-focus', selfFocus);
+  stage.classList.toggle('layout-split', split);
+  layoutBtn.hidden = !canSplit;
+  const label = layoutPref === 'split' ? 'Picture in picture' : 'Side by side';
+  layoutBtn.title = label;
+  layoutBtn.setAttribute('aria-label', label);
+  layoutBtn.classList.toggle('active', split);
+  localTile.setAttribute('aria-label', selfFocus ? 'Your camera, full size. Tap to make it small.' : 'Your camera. Tap to make it full size.');
+}
+
+function toggleSelfFocus(): void {
+  if (localTile.hidden) return;
+  selfFocus = !selfFocus;
+  applyLayout();
+}
+localTile.addEventListener('click', toggleSelfFocus);
+localTile.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' || e.key === ' ') {
+    e.preventDefault();
+    toggleSelfFocus();
+  }
+});
+// While our camera is the big picture, tapping someone's small tile brings them back.
+remoteGrid.addEventListener('click', (e) => {
+  if (!selfFocus || (e.target as HTMLElement).closest('.tile-fullscreen')) return;
+  selfFocus = false;
+  applyLayout();
+});
+layoutBtn.addEventListener('click', () => {
+  layoutPref = layoutPref === 'split' ? 'pip' : 'split';
+  try {
+    localStorage.setItem(LAYOUT_KEY, layoutPref);
+  } catch {
+    /* ignore */
+  }
+  applyLayout();
+});
+
+// ---- Full-screen call (minimize to use the rest of the app while it goes on) ----
+let callMinimized = false;
+function setCallMinimized(minimized: boolean): void {
+  callMinimized = minimized;
+  document.body.classList.toggle('call-minimized', minimized && callsInfo.state === 'in-call');
+  renderCallReturn();
+}
+minimizeBtn.addEventListener('click', () => setCallMinimized(true));
+
+/** While idle: a call we just left (rejoin it) wins over one we're in on another device (move it here). */
+function callOffer(): { kind: 'rejoin'; secondsLeft: number; where: string } | { kind: 'elsewhere'; where: string } | null {
+  if (callsInfo.state !== 'idle' || !calls) return null;
+  const where = (c: { roomId: string | null; participants: string[] }) =>
+    c.roomId ? `#${c.roomId}` : c.participants.length ? `with ${c.participants.join(', ')}` : '';
+  const rejoin = calls.rejoinable;
+  if (rejoin) return { kind: 'rejoin', secondsLeft: Math.max(0, Math.ceil((rejoin.until - Date.now()) / 1000)), where: where(rejoin) };
+  return calls.elsewhere ? { kind: 'elsewhere', where: where(calls.elsewhere) } : null;
+}
+
+/** The floating pill: back to a minimized call, rejoin a call we just left, or take over one from another device. */
+function renderCallReturn(): void {
+  const inCall = callsInfo.state === 'in-call';
+  const offer = callOffer();
+  callReturn.hidden = !(inCall && callMinimized) && !offer;
+  callReturn.classList.toggle('is-elsewhere', !inCall && !!offer);
+  callReturnText.textContent = inCall
+    ? 'Return to call'
+    : offer?.kind === 'rejoin'
+      ? `Rejoin call · ${formatDuration(offer.secondsLeft * 1000)}`
+      : 'In a call on another device · Move it here';
+}
+callReturn.addEventListener('click', () => {
+  if (callsInfo.state === 'in-call') {
+    setCallMinimized(false);
+    tabs.show('call');
+  } else takeCallOffer();
+});
+
+function takeCallOffer(): void {
+  const offer = callOffer();
+  if (!offer) return;
+  tabs.show('call');
+  if (offer.kind === 'rejoin') void calls.rejoin(cameraPref);
+  else void calls.moveHere(cameraPref);
+}
+moveCallBtn.addEventListener('click', takeCallOffer);
+
+/** Counts down the minute we have to rejoin. */
+let offerTimer: ReturnType<typeof setInterval> | undefined;
+function renderElsewhere(): void {
+  const offer = callOffer();
+  elsewhereBanner.hidden = !offer;
+  if (offer?.kind === 'rejoin') {
+    elsewhereText.textContent = `You left the call ${offer.where} · ${offer.secondsLeft}s to rejoin`;
+    moveCallBtn.textContent = 'Rejoin';
+  } else if (offer) {
+    elsewhereText.textContent = `In a call ${offer.where} on another device`;
+    moveCallBtn.textContent = 'Move call here';
+  }
+  if (offer?.kind === 'rejoin' && !offerTimer) offerTimer = setInterval(renderElsewhere, 1000);
+  else if (offer?.kind !== 'rejoin' && offerTimer) {
+    clearInterval(offerTimer);
+    offerTimer = undefined;
+  }
+  renderCallReturn();
+}
+
+// ---- Camera flip (front ↔ back) ----
+async function refreshFlipButton(): Promise<void> {
+  const show = callsInfo.state === 'in-call' && !!calls?.isCameraOn && !calls.isSharingScreen;
+  flipBtn.hidden = !(show && (await calls.canFlipCamera()));
+}
+flipBtn.addEventListener('click', async () => {
+  flipBtn.disabled = true;
+  try {
+    await calls.flipCamera();
+  } finally {
+    flipBtn.disabled = false;
+  }
+});
 
 // ---- Calls ----
 let callsInfo: CallInfo = { ...IDLE_CALL };
@@ -569,9 +723,17 @@ const calls = new CallManager(socket, userId, iceServers, {
   onStateChange: renderCallState,
   onLocalStream: (stream, isScreen) => {
     localVideo.srcObject = stream;
-    localVideo.hidden = !stream || stream.getVideoTracks().length === 0;
+    localTile.hidden = !stream || stream.getVideoTracks().length === 0;
+    localIsScreen = isScreen;
     localVideo.classList.toggle('is-screen', isScreen);
+    // Our own front camera is shown mirrored (like a mirror); the back camera and a shared screen aren't.
+    localTile.classList.toggle('is-mirrored', !isScreen && calls?.cameraFacing !== 'environment');
+    applyLayout();
+    void refreshFlipButton();
   },
+  onFacingChange: (facing) => localTile.classList.toggle('is-mirrored', facing === 'user' && !localIsScreen),
+  onElsewhere: renderElsewhere,
+  onRejoinable: renderElsewhere,
   onPeerStream: (peerId, stream) => {
     const tile = ensureTile(peerId);
     if (tile.video.srcObject !== stream) tile.video.srcObject = stream;
@@ -606,6 +768,7 @@ const calls = new CallManager(socket, userId, iceServers, {
     setButtonLabel(shareBtn, sharing ? 'Stop sharing' : 'Share screen', sharing);
     shareBtn.classList.toggle('active', sharing);
     camBtn.disabled = sharing;
+    void refreshFlipButton();
   },
   onIncoming: (from, video, participants, roomId) => {
     incomingText.textContent = roomId
@@ -627,10 +790,14 @@ const calls = new CallManager(socket, userId, iceServers, {
 function renderCallState(info: CallInfo): void {
   const wasIdle = callsInfo.state === 'idle';
   callsInfo = info;
-  const { state, roomId, participants, invited, incomingFrom } = info;
+  const { state, roomId, participants, invited, away, incomingFrom } = info;
 
   stage.dataset.state = state;
   document.body.classList.toggle('in-call', state === 'in-call');
+  // A new call opens full screen; minimizing lasts until it ends.
+  if (wasIdle && state === 'in-call') callMinimized = false;
+  document.body.classList.toggle('call-minimized', state === 'in-call' && callMinimized);
+  minimizeBtn.hidden = state !== 'in-call';
   const inCall = state === 'in-call';
   const idle = state === 'idle';
 
@@ -654,11 +821,13 @@ function renderCallState(info: CallInfo): void {
   let status: string;
   if (idle) status = socket.connected ? 'Ready' : hasConnected ? 'Offline' : 'Connecting…';
   else if (state === 'incoming') status = `Incoming call from ${incomingFrom}`;
+  else if (participants.length === 0 && away.length) status = `${away.join(', ')} left · waiting a minute for them to rejoin…`;
   else if (roomId && participants.length === 0) status = `Waiting in #${roomId} — share the invite link`;
   else if (participants.length === 0) status = invited.length ? `Calling ${invited.join(', ')}…` : 'Starting call…';
   else {
     status = `${roomId ? `#${roomId}` : 'In call'} · ${participants.length + 1} people`;
     if (invited.length) status += ` · ringing ${invited.join(', ')}`;
+    if (away.length) status += ` · waiting for ${away.join(', ')}`;
   }
   callStatus.textContent = status;
   stagePlaceholder.textContent = idle
@@ -685,6 +854,9 @@ function renderCallState(info: CallInfo): void {
   renderTimer(info);
 
   if (wasIdle && state !== 'idle') tabs.show('call');
+  applyLayout();
+  renderElsewhere();
+  void refreshFlipButton();
   updateCallBadge();
   renderUsers();
   updates.refresh();
@@ -844,6 +1016,7 @@ camBtn.addEventListener('click', async () => {
     renderCameraButton(await calls.toggleCamera());
   } finally {
     camBtn.disabled = callsInfo.state !== 'in-call' || calls.isSharingScreen;
+    void refreshFlipButton();
   }
 });
 shareBtn.addEventListener('click', () => {

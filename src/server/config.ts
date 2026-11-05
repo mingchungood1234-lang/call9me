@@ -91,6 +91,8 @@ export const config = {
    */
   maxCallParticipants: Number(process.env.MAX_CALL_PARTICIPANTS ?? 8),
   ringTimeoutMs: 30_000,
+  /** After leaving (or dropping out of) a call, how long it waits for that person to rejoin. */
+  rejoinWindowMs: 60_000,
   /** Longer ring when the callee is offline and rung via push (they need time to open the app). */
   offlineRingTimeoutMs: 45_000,
   rootDir: ROOT_DIR,

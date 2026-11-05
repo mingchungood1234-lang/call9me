@@ -14,6 +14,8 @@ const EVENT_LIMITS: Partial<Record<keyof ClientToServerEvents, [number, number]>
   'chat:prefs': [60, 60_000],
   'call:invite': [10, 60_000],
   'call:join-room': [20, 60_000],
+  'call:move-here': [10, 60_000],
+  'call:rejoin': [10, 60_000],
   'friends:request': [20, 60_000],
   'rooms:create': [10, 60_000],
   'rooms:share': [10, 60_000],
