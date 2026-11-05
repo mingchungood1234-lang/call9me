@@ -70,4 +70,8 @@ export const httpLimits = {
   pairPoll: new RateLimiter(120, 60_000),
   /** Looking up / approving a QR request from a signed-in device (per user, not IP). */
   pairApprove: new RateLimiter(20, 60_000),
+  /** Admin passcode attempts (per IP, and per admin). */
+  adminUnlock: new RateLimiter(5, 5 * 60_000),
+  /** Admin dashboard requests (per admin). */
+  adminAction: new RateLimiter(240, 60_000),
 };

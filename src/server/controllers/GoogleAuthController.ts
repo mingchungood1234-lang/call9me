@@ -247,6 +247,10 @@ export class GoogleAuthController {
   }
 
   private static signIn(req: Request, res: Response, id: string, next: string): void {
+    if (accountModel.isSuspended(id)) {
+      res.redirect('/?error=suspended');
+      return;
+    }
     sessionModel.destroy(sessionTokenFrom(req.headers.cookie));
     setSessionCookie(req, res, sessionModel.create(id));
     res.redirect(next);

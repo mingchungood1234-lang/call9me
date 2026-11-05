@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <%- include('partials/head', { title: 'Call9me — Admin' }) %>
+</head>
+<body class="admin-page" data-user-id="<%= userId %>">
+  <header class="topbar">
+    <div class="topbar-brand"><span class="brand-mark small" aria-hidden="true">9</span><span class="brand-name">Call9me</span><span class="admin-tag">Admin</span></div>
+    <div class="topbar-user">
+      <span class="admin-who">Signed in as <strong><%= userId %></strong></span>
+      <%- include('partials/theme-toggle') %>
+      <button id="lock-btn" class="btn btn-ghost btn-small" type="button" hidden>Lock</button>
+      <a class="btn btn-secondary btn-small" href="/app">Back to app</a>
+    </div>
+  </header>
+
+  <main class="admin">
+    <!-- Second step: the admin passcode (ADMIN_PASSCODE), asked again after 15 idle minutes -->
+    <section id="admin-locked" class="admin-card admin-unlock" hidden>
+      <h1>Admin dashboard</h1>
+      <% if (passcodeSet) { %>
+      <p class="admin-muted">Enter the admin passcode to continue. It stays unlocked for 15 minutes of use.</p>
+      <form id="unlock-form" class="admin-unlock-form">
+        <input id="unlock-passcode" type="password" autocomplete="current-password" placeholder="Admin passcode" aria-label="Admin passcode" required>
+        <button class="btn btn-primary" type="submit">Unlock</button>
+      </form>
+      <% } else { %>
+      <p class="admin-muted">The dashboard is off until the server has an admin passcode. Add one (at least 12 characters) to <code>.env</code> and restart:</p>
+      <pre class="admin-code">ADMIN_PASSCODE=a-long-passphrase-only-admins-know</pre>
+      <% } %>
+    </section>
+
+    <div id="admin-dash" class="admin-dash" hidden>
+      <nav id="admin-tabs" class="mode-switch admin-tabs" role="tablist" aria-label="Sections">
+        <button type="button" role="tab" data-view="overview" aria-selected="true" class="active">Overview</button>
+        <button type="button" role="tab" data-view="users" aria-selected="false">Users</button>
+        <button type="button" role="tab" data-view="rooms" aria-selected="false">Rooms</button>
+        <button type="button" role="tab" data-view="log" aria-selected="false">Audit log</button>
+      </nav>
+
+      <section data-view="overview" class="admin-view">
+        <div id="ov-stats" class="admin-stats"></div>
+        <h2 class="admin-h2">Calls right now</h2>
+        <ul id="ov-calls" class="admin-list"></ul>
+        <p id="ov-system" class="admin-muted"></p>
+      </section>
+
+      <section data-view="users" class="admin-view" hidden>
+        <div class="admin-toolbar">
+          <input id="user-search" type="search" placeholder="Search by ID or email" aria-label="Search users" autocomplete="off">
+          <select id="user-filter" aria-label="Show">
+            <option value="all">Everyone</option>
+            <option value="online">Online</option>
+            <option value="suspended">Suspended</option>
+            <option value="locked">Locked out</option>
+          </select>
+        </div>
+        <p id="user-count" class="admin-muted"></p>
+        <ul id="users-list" class="admin-list"></ul>
+      </section>
+
+      <section data-view="rooms" class="admin-view" hidden>
+        <div class="admin-toolbar">
+          <input id="room-search" type="search" placeholder="Search by room ID or owner" aria-label="Search rooms" autocomplete="off">
+        </div>
+        <ul id="rooms-list" class="admin-list"></ul>
+      </section>
+
+      <section data-view="log" class="admin-view" hidden>
+        <p class="admin-muted">Every admin action, newest first. Kept in <code>data/admin-log.json</code>.</p>
+        <ul id="log-list" class="admin-list admin-log"></ul>
+      </section>
+    </div>
+  </main>
+
+  <div id="toasts"></div>
+  <script type="module" src="/js/admin.js?v=<%= assetVersion %>"></script>
+</body>
+</html>

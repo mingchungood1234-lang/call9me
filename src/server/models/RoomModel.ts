@@ -223,6 +223,18 @@ export class RoomModel {
     return message;
   }
 
+  /** Deletes a room's messages (memory and disk); members and followers stay. @returns the messages people wrote. */
+  clearHistory(roomId: string): number {
+    const id = this.normalize(roomId);
+    const messages = this.messagesOf(id);
+    const count = messages.filter((m) => !m.system).length;
+    messages.length = 0;
+    this.pendingHistory.delete(id);
+    fs.rmSync(this.historyFile(id), { force: true });
+    this.release(id);
+    return count;
+  }
+
   /** Forgets a room completely: members, messages, followers and any saved history. */
   deleteRoom(roomId: string): void {
     const id = this.normalize(roomId);

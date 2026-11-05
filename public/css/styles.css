@@ -1016,17 +1016,50 @@ body.in-call .call-status { background: var(--primary-soft); color: var(--primar
 /* Ringing, nobody else here yet: our camera fills the stage behind "Calling…". */
 .stage.solo .remote-grid:not([data-count='0']) ~ .stage-placeholder { background: rgba(7, 9, 20, 0.45); color: #fff; }
 
-/* Maximized (tap a tile): it fills the stage, everyone else in a strip below. Tap it again to go back. */
+/*
+ * Maximized (tap a tile, or its ⤢ for full screen): it takes the stage and everyone else
+ * shrinks to small tiles along the right side, like Discord (along the bottom on an upright
+ * phone). Tap it again, or the grid button, to go back to equal tiles.
+ */
+.stage { --side: clamp(128px, 19%, 240px); --strip: 96px; }
 .stage.has-focus .remote-grid {
-  grid-template-columns: none;
-  grid-auto-flow: column;
-  grid-auto-columns: minmax(0, 1fr);
-  grid-template-rows: minmax(0, 1fr) 96px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 8px;
 }
-.stage.has-focus .tile.is-focused { grid-row: 1; grid-column: 1 / -1; background: #000; }
-.stage.has-focus .tile:not(.is-focused) { grid-row: 2; }
-.stage.has-focus .remote-grid[data-count='1'] { grid-template-rows: minmax(0, 1fr); }
+.stage.has-focus .tile.is-focused {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  bottom: 8px;
+  right: calc(var(--side) + 16px);
+  background: #000;
+}
+.stage.has-focus .tile:not(.is-focused) {
+  flex: 0 1 auto;
+  width: var(--side);
+  aspect-ratio: 16 / 9;
+  min-height: 0;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.35);
+}
+/* Only the maximized tile: it gets the whole stage. */
+.stage.has-focus .remote-grid[data-count='1'] .tile.is-focused { right: 8px; }
+.stage.has-focus .remote-grid[data-count='1'] { display: block; }
+@media (orientation: portrait) {
+  .stage.has-focus .remote-grid { flex-direction: row; align-items: flex-end; justify-content: center; }
+  .stage.has-focus .tile.is-focused { right: 8px; bottom: calc(var(--strip) + 16px); }
+  .stage.has-focus .tile:not(.is-focused) { width: auto; height: var(--strip); aspect-ratio: 3 / 4; flex: 0 1 auto; min-width: 0; }
+}
 .tile.is-focused video { object-fit: contain; }
+
+/* The whole call full screen (with its controls): a little more room for the side tiles. */
+.call-panel:fullscreen { display: flex; flex-direction: column; gap: 8px; padding: 10px; background: var(--bg); }
+.stage.is-fullscreen { --side: clamp(150px, 16%, 280px); --strip: 120px; }
+.stage-btn .fs-exit, .stage.is-fullscreen .stage-btn .fs-enter { display: none; }
+.stage.is-fullscreen .stage-btn .fs-exit { display: block; }
 .stage.has-focus .tile:not(.is-focused) .tile-avatar { width: auto; height: 56%; font-size: 1rem; box-shadow: none; }
 .stage.has-focus .tile:not(.is-focused) .tile-fullscreen { display: none; }
 .stage.has-focus .tile:not(.is-focused) .tile-label { left: 4px; bottom: 4px; max-width: calc(100% - 8px); padding: 1px 6px; font-size: 0.7rem; }
@@ -1572,7 +1605,7 @@ html.standalone :is(input, textarea, .msg-text, .room-banner-label) { -webkit-us
   .call-status { text-align: center; }
 
   .remote-grid[data-count='5'], .remote-grid[data-count='6'] { --cols: 2; }
-  .stage.has-focus .remote-grid { grid-template-rows: minmax(0, 1fr) 76px; gap: 6px; padding: 6px; }
+  .stage { --side: clamp(96px, 22%, 160px); --strip: 80px; }
 
   .tile-fullscreen { opacity: 1; }
 
@@ -1744,4 +1777,56 @@ html.standalone :is(input, textarea, .msg-text, .room-banner-label) { -webkit-us
   .update-banner, body.app .update-banner { left: calc(var(--rail-w) + env(safe-area-inset-left) + 12px); bottom: 12px; }
   .invite-stack, #toasts { left: calc(var(--rail-w) + env(safe-area-inset-left) + 12px); top: 52px; }
   .emoji-picker { max-height: min(260px, 70dvh); }
+}
+
+/* ==========================================================================
+   Admin dashboard (/admin)
+   ========================================================================== */
+body.admin-page { min-height: 100dvh; background: var(--bg); }
+.admin-tag { margin-left: 4px; padding: 2px 8px; border-radius: 6px; background: var(--danger); color: #fff; font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; }
+.admin-who { font-size: 0.85rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.admin { width: min(1100px, 100%); margin: 0 auto; padding: 16px; box-sizing: border-box; }
+.admin-card { padding: 24px; border: 1px solid var(--border); border-radius: 18px; background: var(--bg-elev); box-shadow: var(--shadow-sm); }
+.admin-unlock { max-width: 440px; margin: 10vh auto 0; }
+.admin-unlock h1 { margin: 0 0 6px; font-size: 1.3rem; }
+.admin-unlock-form { display: flex; gap: 8px; margin-top: 14px; }
+.admin-unlock-form input { flex: 1; min-width: 0; }
+.admin-code { margin: 10px 0 0; padding: 10px 12px; border-radius: 10px; background: var(--surface-2); overflow-x: auto; font-size: 0.85rem; }
+.admin-muted { margin: 0; color: var(--muted); font-size: 0.85rem; }
+.admin-dash { display: grid; gap: 14px; }
+.admin-tabs { justify-self: start; max-width: 100%; overflow-x: auto; }
+.admin-view { display: grid; gap: 10px; }
+.admin-view[hidden] { display: none; }
+.admin-h2 { margin: 8px 0 0; font-size: 1rem; }
+.admin-stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
+.admin-stat { display: grid; gap: 2px; padding: 14px 16px; border: 1px solid var(--border); border-radius: 14px; background: var(--bg-elev); color: var(--muted); font-size: 0.82rem; }
+.admin-stat-value { color: var(--text); font-size: 1.6rem; font-weight: 800; font-variant-numeric: tabular-nums; }
+.admin-stat.is-good .admin-stat-value { color: var(--success); }
+.admin-stat.is-warn .admin-stat-value { color: var(--danger); }
+.admin-toolbar { display: flex; gap: 8px; flex-wrap: wrap; }
+.admin-toolbar input { flex: 1; min-width: 180px; }
+.admin-toolbar select { padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-input); color: var(--text); font: inherit; }
+.admin-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.admin-row { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 14px; background: var(--bg-elev); }
+.admin-row.is-warn { border-color: var(--danger); }
+.admin-row-main { display: grid; gap: 4px; flex: 1; min-width: 0; }
+.admin-row-title { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.admin-row .admin-muted { overflow-wrap: anywhere; }
+.admin-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; flex: none; max-width: 52%; }
+.admin-badge { padding: 1px 8px; border-radius: 999px; background: var(--surface-2); color: var(--muted); font-size: 0.72rem; font-weight: 600; }
+.admin-badge.is-good { background: color-mix(in srgb, var(--success) 16%, transparent); color: var(--success); }
+.admin-badge.is-bad { background: var(--danger); color: #fff; }
+.admin-badge.is-warn { background: color-mix(in srgb, var(--danger) 14%, transparent); color: var(--danger); }
+.admin-badge.is-admin { background: var(--primary-soft); color: var(--primary); }
+.admin-people summary { cursor: pointer; color: var(--primary); font-size: 0.85rem; font-weight: 600; }
+.admin-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.admin-chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 4px 2px 10px; border-radius: 999px; background: var(--surface-2); font-size: 0.85rem; }
+.admin-chip.is-banned { text-decoration: line-through; color: var(--muted); }
+.admin-chip.is-banned .btn { text-decoration: none; }
+.admin-chip .btn-small { min-height: 0; padding: 2px 8px; font-size: 0.75rem; }
+@media (max-width: 720px) {
+  .admin { padding: 10px; }
+  .admin-who { display: none; }
+  .admin-row { flex-direction: column; align-items: stretch; }
+  .admin-actions { max-width: none; justify-content: flex-start; }
 }

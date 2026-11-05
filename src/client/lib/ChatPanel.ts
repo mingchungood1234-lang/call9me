@@ -119,6 +119,12 @@ export class ChatPanel {
     socket.on('chat:members', ({ roomId, members }) => {
       if (roomId === this.currentRoom) this.renderMembers(members);
     });
+    socket.on('chat:cleared', ({ roomId }) => {
+      const entry = this.inbox.get(roomId);
+      if (entry) entry.lastMessage = undefined;
+      if (roomId === this.currentRoom) this.messagesEl.replaceChildren();
+      this.renderList();
+    });
     socket.on('chat:removed', ({ roomId, by, banned }) => {
       this.inbox.delete(roomId);
       if (roomId === this.currentRoom) this.showList();

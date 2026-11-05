@@ -56,6 +56,7 @@ const localTile = $('#local-tile');
 const localAvatar = $('#local-avatar');
 const layoutBtn = $<HTMLButtonElement>('#layout-btn');
 const minimizeBtn = $<HTMLButtonElement>('#call-minimize-btn');
+const stageFullscreenBtn = $<HTMLButtonElement>('#stage-fullscreen-btn');
 const flipBtn = $<HTMLButtonElement>('#flip-btn');
 const elsewhereBanner = $('#call-elsewhere');
 const elsewhereText = $('#call-elsewhere-text');
@@ -499,8 +500,10 @@ function tileShell(key: string, ownerId: string, name: string, extra: HTMLElemen
     fullscreenBtn,
   ]);
   fullscreenBtn.addEventListener('click', (e) => {
-    e.stopPropagation(); // not a tap on the tile (that maximizes it)
-    enterFullscreen(root, video);
+    e.stopPropagation(); // not a tap on the tile (that toggles maximizing it)
+    focusKey = key;
+    layoutStage();
+    enterStageFullscreen(video);
   });
   root.dataset.key = key;
   root.dataset.peer = ownerId;
@@ -596,14 +599,35 @@ function setPeerSharing(peerId: string, sharing: boolean): void {
 }
 
 /**
- * Full screen on the tile itself (no native player, so no pause button). iPhone Safari
- * only supports native video full screen; `keepPlaying` resumes it if paused there.
+ * The whole call goes full screen (the maximized tile big, everyone else along the side),
+ * not just one video, so the other cameras stay in view. iPhones can't make a page element
+ * full screen; there the call already covers the screen, so maximizing is enough.
  */
-function enterFullscreen(tile: HTMLElement, video: HTMLVideoElement): void {
-  const v = video as HTMLVideoElement & { webkitEnterFullscreen?: () => void };
-  if (tile.requestFullscreen) tile.requestFullscreen().catch(() => v.webkitEnterFullscreen?.());
-  else v.webkitEnterFullscreen?.();
+/** Full screen takes the whole call panel, so the mute / camera / leave buttons come along. */
+const callPanel = stage.closest<HTMLElement>('.call-panel') ?? stage;
+const canStageFullscreen = typeof callPanel.requestFullscreen === 'function' && document.fullscreenEnabled !== false;
+function enterStageFullscreen(video?: HTMLVideoElement): void {
+  if (document.fullscreenElement === callPanel) return;
+  if (canStageFullscreen) {
+    callPanel.requestFullscreen().catch(() => {});
+    return;
+  }
+  // Last resort (old iPad Safari): the browser's own full-screen player for that video.
+  (video as (HTMLVideoElement & { webkitEnterFullscreen?: () => void }) | undefined)?.webkitEnterFullscreen?.();
 }
+function renderStageFullscreen(): void {
+  const on = document.fullscreenElement === callPanel;
+  stage.classList.toggle('is-fullscreen', on);
+  stageFullscreenBtn.hidden = !canStageFullscreen || callsInfo?.state !== 'in-call';
+  const label = on ? 'Exit full screen' : 'Full screen';
+  stageFullscreenBtn.title = label;
+  stageFullscreenBtn.setAttribute('aria-label', label);
+}
+stageFullscreenBtn.addEventListener('click', () => {
+  if (document.fullscreenElement === callPanel) void document.exitFullscreen().catch(() => {});
+  else enterStageFullscreen();
+});
+document.addEventListener('fullscreenchange', renderStageFullscreen);
 
 /**
  * Live call video (including a shared screen) must never stay paused: no controls,
@@ -696,6 +720,7 @@ function layoutStage(): void {
     const focused = tile.dataset.key === focusKey;
     tile.classList.toggle('is-focused', focused);
     tile.title = focused ? 'Tap to go back to everyone' : 'Tap to maximize';
+    tile.querySelector('.tile-fullscreen')?.setAttribute('title', 'Maximize and go full screen');
   }
   remoteGrid.dataset.count = String(all.length);
   stage.classList.toggle('has-focus', focusKey !== null);
@@ -733,7 +758,10 @@ function setCallMinimized(minimized: boolean): void {
   document.body.classList.toggle('call-minimized', minimized && callsInfo.state === 'in-call');
   renderCallReturn();
 }
-minimizeBtn.addEventListener('click', () => setCallMinimized(true));
+minimizeBtn.addEventListener('click', () => {
+  if (document.fullscreenElement === callPanel) void document.exitFullscreen().catch(() => {});
+  setCallMinimized(true);
+});
 
 /** While idle: a call we just left (rejoin it) wins over one we're in on another device (move it here). */
 function callOffer(): { kind: 'rejoin'; secondsLeft: number; where: string } | { kind: 'elsewhere'; where: string } | null {
@@ -910,6 +938,9 @@ function renderCallState(info: CallInfo): void {
   if (wasIdle && state === 'in-call') callMinimized = false;
   document.body.classList.toggle('call-minimized', state === 'in-call' && callMinimized);
   minimizeBtn.hidden = state !== 'in-call';
+  // The call ended (or we minimized it): leave full screen.
+  if (state !== 'in-call' && document.fullscreenElement === callPanel) void document.exitFullscreen().catch(() => {});
+  renderStageFullscreen();
   const inCall = state === 'in-call';
   const idle = state === 'idle';
 

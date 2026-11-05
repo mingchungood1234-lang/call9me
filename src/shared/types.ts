@@ -324,6 +324,8 @@ export interface ServerToClientEvents {
   'chat:mention': (payload: { from: string; roomId: string; text: string }) => void;
   /** The owner deleted this room; everyone in it has been moved out. */
   'chat:deleted': (payload: { roomId: string; by: string }) => void;
+  /** An admin cleared this room's chat history. */
+  'chat:cleared': (payload: { roomId: string }) => void;
   /** The owner took us out of this room (`banned`: and we can't come back). */
   'chat:removed': (payload: { roomId: string; by: string; banned: boolean }) => void;
 
@@ -381,6 +383,71 @@ export type PairStartResponse = ApiResult<{ code: string; url: string; expiresAt
 export type PairStatusResponse = ApiResult<{ status: 'pending' | 'expired' } | { status: 'approved'; userId: string }>;
 /** For the signed-in device: which browser is asking to be signed in, and since when. */
 export type PairInfoResponse = ApiResult<{ code: string; device: string; ageMs: number }>;
+
+// ---- Admin dashboard (/admin) ----
+
+export interface AdminCall {
+  id: string;
+  roomId: string | null;
+  participants: string[];
+  invited: string[];
+  startedAt: number;
+}
+
+export interface AdminOverview {
+  online: number;
+  /** Open app tabs across everyone online. */
+  devices: number;
+  accounts: number;
+  suspended: number;
+  /** IDs locked out after wrong PINs right now. */
+  locked: number;
+  rooms: number;
+  calls: AdminCall[];
+  serverStartedAt: number;
+  version: string;
+  memoryMb: number;
+}
+
+export interface AdminUser {
+  id: string;
+  createdAt: number;
+  hasPin: boolean;
+  googleEmail?: string;
+  suspended: boolean;
+  lockedUntil: number;
+  admin: boolean;
+  /** Devices connected now (0: offline). */
+  online: number;
+  /** Devices signed in (valid sessions). */
+  sessions: number;
+  pushDevices: number;
+  friends: number;
+  rooms: number;
+  status: UserStatus;
+}
+
+export interface AdminRoom {
+  id: string;
+  owner: string;
+  visibility: RoomVisibility | 'public-chat';
+  createdAt: number;
+  /** Everyone who joined (besides the owner). */
+  members: string[];
+  banned: string[];
+  /** In its chat right now. */
+  online: string[];
+  messages: number;
+  inCall: number;
+}
+
+export interface AdminLogEntry {
+  at: number;
+  admin: string;
+  action: string;
+  target: string;
+  detail?: string;
+}
 
 // ---- Web Push ----
 

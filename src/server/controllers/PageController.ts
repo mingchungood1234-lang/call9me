@@ -3,11 +3,13 @@ import { PIN_RULES, USER_ID_RULES } from '../../shared/validation';
 import { config, isAdmin } from '../config';
 import { refreshSessionCookie, requestUserId } from '../middleware/session';
 import { accountModel } from '../models/AccountModel';
+import { adminPasscodeSet } from './AdminController';
 import { googleEnabled, pendingGoogleFor, suggestId } from './GoogleAuthController';
 
 const ERROR_MESSAGES: Record<string, string> = {
   session: 'Please sign in to continue.',
   devices: 'This ID is already open on too many devices. Close it on one of them, or sign out there.',
+  suspended: 'This ID has been suspended by an admin.',
   google: 'Google sign-in did not complete. Please try again.',
   'google-off': 'Google sign-in is not set up on this server.',
 };
@@ -35,6 +37,22 @@ export class PageController {
       googleEnabled: googleEnabled(),
       googlePending: google ? { email: google.email, suggestion: suggestId(google) } : null,
     });
+  }
+
+  /** GET /admin — the admin dashboard: admins only (everyone else gets a 404); unlocked with ADMIN_PASSCODE. */
+  static admin(req: Request, res: Response): void {
+    const userId = requestUserId(req);
+    if (!userId) {
+      res.redirect('/?error=session');
+      return;
+    }
+    if (!isAdmin(userId)) {
+      res.status(404).send('Not found');
+      return;
+    }
+    res.set('Cache-Control', 'no-store');
+    refreshSessionCookie(req, res);
+    res.render('admin', { userId, passcodeSet: adminPasscodeSet() });
   }
 
   /** GET /app — the main calling + chat page; requires a signed-in session. */

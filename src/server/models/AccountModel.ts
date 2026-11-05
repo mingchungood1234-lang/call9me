@@ -15,6 +15,19 @@ interface Account {
   /** Google account ("sub") linked to this ID, and its email (for display). */
   googleSub?: string;
   googleEmail?: string;
+  /** Set by an admin: can't sign in or stay connected until unsuspended. */
+  suspended?: boolean;
+}
+
+/** An account as the admin dashboard lists it (never the PIN hash). */
+export interface AccountInfo {
+  id: string;
+  createdAt: number;
+  hasPin: boolean;
+  googleEmail?: string;
+  suspended: boolean;
+  /** Locked out after wrong PINs until then (0: not locked). */
+  lockedUntil: number;
 }
 
 interface FailureRecord {
@@ -103,6 +116,7 @@ export class AccountModel {
     }
 
     const existing = this.accounts.get(key);
+    if (existing?.suspended) return { ok: false, error: 'This ID has been suspended by an admin.' };
     if (!existing) {
       const salt = randomBytes(16).toString('hex');
       const pinHash = (await scrypt(pin, salt, 32)).toString('hex');
@@ -126,6 +140,66 @@ export class AccountModel {
 
     if (this.failures.delete(key)) this.persistFailures();
     return { ok: true, id: existing.id, created: false };
+  }
+
+  // ---- Admin ----
+
+  list(): AccountInfo[] {
+    const now = Date.now();
+    return [...this.accounts.entries()]
+      .map(([key, a]) => {
+        const lockedUntil = this.failures.get(key)?.lockedUntil ?? 0;
+        return {
+          id: a.id,
+          createdAt: a.createdAt,
+          hasPin: !!a.pinHash,
+          googleEmail: a.googleEmail,
+          suspended: !!a.suspended,
+          lockedUntil: lockedUntil > now ? lockedUntil : 0,
+        };
+      })
+      .sort((a, b) => a.id.localeCompare(b.id));
+  }
+
+  isSuspended(id: string): boolean {
+    return this.accounts.get(this.key(id))?.suspended ?? false;
+  }
+
+  /** @returns whether the account exists. */
+  setSuspended(id: string, suspended: boolean): boolean {
+    const account = this.accounts.get(this.key(id));
+    if (!account) return false;
+    if (suspended) account.suspended = true;
+    else delete account.suspended;
+    this.persist();
+    return true;
+  }
+
+  /** A new PIN chosen by an admin (e.g. the user forgot theirs); also lifts any lockout. */
+  async setPin(id: string, pin: string): Promise<boolean> {
+    const account = this.accounts.get(this.key(id));
+    if (!account) return false;
+    account.salt = randomBytes(16).toString('hex');
+    account.pinHash = (await scrypt(pin, account.salt, 32)).toString('hex');
+    this.persist();
+    this.unlock(id);
+    return true;
+  }
+
+  /** Clears wrong-PIN lockouts. @returns whether there was one. */
+  unlock(id: string): boolean {
+    const removed = this.failures.delete(this.key(id));
+    if (removed) this.persistFailures();
+    return removed;
+  }
+
+  delete(id: string): boolean {
+    const key = this.key(id);
+    if (!this.accounts.delete(key)) return false;
+    this.failures.delete(key);
+    this.persist();
+    this.persistFailures();
+    return true;
   }
 
   /**

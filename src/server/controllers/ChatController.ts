@@ -172,29 +172,8 @@ export class ChatController {
       const settings = this.ownedRoom(payload?.roomId, userId);
       if (typeof settings === 'string') return ack({ ok: false, error: settings });
       const target = typeof payload.userId === 'string' ? payload.userId : '';
-      if (!target || same(target, settings.owner)) return ack({ ok: false, error: 'Choose someone else to remove' });
-      const ban = payload.ban === true;
-      const wasIn = roomDirectory.hasJoined(settings, target);
-      if (!wasIn && !ban) return ack({ ok: false, error: `${target} is not in #${settings.id}` });
-
-      if (ban) roomSettingsModel.ban(settings, target);
-      else roomSettingsModel.removeMember(settings, target);
-      const follower = roomModel.followersOf(settings.id).find((f) => same(f, target));
-      if (follower) roomModel.unfollow(settings.id, follower);
-      const viewer = roomModel.members(settings.id).find((m) => same(m, target));
-      if (viewer) roomModel.leave(settings.id, viewer);
-      const user = userModel.find(target);
-      if (user) {
-        this.io.in(user.channel).socketsLeave(channel(settings.id));
-        this.io.to(user.channel).emit('chat:removed', { roomId: settings.id, by: userId, banned: ban });
-      }
-      if (wasIn) {
-        const notice = roomModel.addMessage(settings.id, userId, `${target} was ${ban ? 'banned' : 'removed'}`, true);
-        this.io.to(channel(settings.id)).emit('chat:message', notice);
-      }
-      ack({ ok: true });
-      this.emitMembers(settings.id);
-      roomDirectory.changed();
+      const error = this.removeMember(settings, target, payload.ban === true, userId);
+      ack(error ? { ok: false, error } : { ok: true });
     });
 
     socket.on('rooms:unban', (payload, rawAck) => {
@@ -216,17 +195,69 @@ export class ChatController {
       if (settings.owner.toLowerCase() !== userId.toLowerCase()) {
         return ack({ ok: false, error: `Only ${settings.owner} can delete #${settings.id}` });
       }
-      if (callModel.findByRoom(settings.id)) {
-        return ack({ ok: false, error: `A call is going on in #${settings.id}. Delete it once the call ends.` });
-      }
-      const room = channel(settings.id);
-      this.io.to(room).emit('chat:deleted', { roomId: settings.id, by: userId });
-      this.io.in(room).socketsLeave(room);
-      roomModel.deleteRoom(settings.id);
-      roomSettingsModel.remove(settings.id);
-      ack({ ok: true });
-      roomDirectory.changed();
+      const error = this.deleteRoom(settings, userId);
+      ack(error ? { ok: false, error } : { ok: true });
     });
+  }
+
+  /**
+   * Takes `target` out of a room (`ban`: for good). Used by the room's owner and by admins
+   * (`by`). @returns why not, or null.
+   */
+  removeMember(settings: RoomSettings, target: string, ban: boolean, by: string): string | null {
+    if (!target || same(target, settings.owner)) return 'Choose someone else to remove';
+    const wasIn = roomDirectory.hasJoined(settings, target);
+    if (!wasIn && !ban) return `${target} is not in #${settings.id}`;
+
+    if (ban) roomSettingsModel.ban(settings, target);
+    else roomSettingsModel.removeMember(settings, target);
+    const follower = roomModel.followersOf(settings.id).find((f) => same(f, target));
+    if (follower) roomModel.unfollow(settings.id, follower);
+    const viewer = roomModel.members(settings.id).find((m) => same(m, target));
+    if (viewer) roomModel.leave(settings.id, viewer);
+    const user = userModel.find(target);
+    if (user) {
+      this.io.in(user.channel).socketsLeave(channel(settings.id));
+      this.io.to(user.channel).emit('chat:removed', { roomId: settings.id, by, banned: ban });
+    }
+    if (wasIn) {
+      const notice = roomModel.addMessage(settings.id, by, `${target} was ${ban ? 'banned' : 'removed'}`, true);
+      this.io.to(channel(settings.id)).emit('chat:message', notice);
+    }
+    this.emitMembers(settings.id);
+    roomDirectory.changed();
+    return null;
+  }
+
+  /** Deletes a room for everyone (not while its call is on). @returns why not, or null. */
+  deleteRoom(settings: RoomSettings, by: string): string | null {
+    if (callModel.findByRoom(settings.id)) return `A call is going on in #${settings.id}. Delete it once the call ends.`;
+    const room = channel(settings.id);
+    this.io.to(room).emit('chat:deleted', { roomId: settings.id, by });
+    this.io.in(room).socketsLeave(room);
+    roomModel.deleteRoom(settings.id);
+    roomSettingsModel.remove(settings.id);
+    roomDirectory.changed();
+    return null;
+  }
+
+  /** An admin wipes a room's chat (the Public chat too); everyone in it sees it go. @returns messages removed. */
+  clearHistory(roomId: string, by: string): number {
+    const id = roomModel.normalize(roomId);
+    const count = roomModel.clearHistory(id);
+    this.io.to(channel(id)).emit('chat:cleared', { roomId: id });
+    const notice = roomModel.addMessage(id, by, `Chat history was cleared by an admin`, true);
+    this.io.to(channel(id)).emit('chat:message', notice);
+    this.resendChatLists(id);
+    return count;
+  }
+
+  /** Everyone gets the room's chat list again (after an admin cleared its history). */
+  resendChatLists(roomId: string): void {
+    for (const id of roomModel.followersOf(roomId)) {
+      const user = userModel.find(id);
+      if (user) this.io.to(user.channel).emit('chat:rooms', this.chatList(user.id));
+    }
   }
 
   /** Closing the app just stops viewing; the rooms stay in the user's list. */

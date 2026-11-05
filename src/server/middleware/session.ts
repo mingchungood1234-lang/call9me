@@ -1,5 +1,6 @@
 import type { Request, Response } from 'express';
 import { config } from '../config';
+import { accountModel } from '../models/AccountModel';
 import { sessionModel } from '../models/SessionModel';
 
 export const SESSION_COOKIE = 'c9m_sid';
@@ -26,7 +27,8 @@ export function sessionTokenFrom(cookieHeader: string | undefined): string | und
 
 /** The signed-in user ID for an HTTP request or socket handshake, if any. */
 export function sessionUserId(cookieHeader: string | undefined): string | undefined {
-  return sessionModel.userIdFor(sessionTokenFrom(cookieHeader));
+  const userId = sessionModel.userIdFor(sessionTokenFrom(cookieHeader));
+  return userId && !accountModel.isSuspended(userId) ? userId : undefined;
 }
 
 export function requestUserId(req: Request): string | undefined {

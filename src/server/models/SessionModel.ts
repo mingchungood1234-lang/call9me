@@ -15,6 +15,9 @@ interface StoredSession extends Session {
 
 const hashToken = (token: string) => createHash('sha256').update(token).digest('hex');
 
+/** A stable, non-secret key for a session token (its hash), e.g. to remember an admin unlock. */
+export const sessionKey = hashToken;
+
 /**
  * Login sessions keyed by an opaque random token stored in a cookie. Persisted to JSON
  * so restarts/redeploys don't sign everyone out (important for installed PWAs answering
@@ -58,6 +61,27 @@ export class SessionModel {
 
   destroy(token: string | undefined): void {
     if (token && this.sessions.delete(hashToken(token))) this.schedulePersist();
+  }
+
+  /** Signs the user out on every device. @returns how many sessions ended. */
+  destroyAllFor(userId: string): number {
+    const key = userId.toLowerCase();
+    let count = 0;
+    for (const [hash, session] of this.sessions) {
+      if (session.userId.toLowerCase() === key) {
+        this.sessions.delete(hash);
+        count++;
+      }
+    }
+    if (count) this.schedulePersist();
+    return count;
+  }
+
+  /** How many devices are signed in as this user (sessions still valid). */
+  countFor(userId: string): number {
+    const key = userId.toLowerCase();
+    const now = Date.now();
+    return [...this.sessions.values()].filter((s) => s.expiresAt > now && s.userId.toLowerCase() === key).length;
   }
 
   private prune(): void {

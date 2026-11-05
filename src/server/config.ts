@@ -123,6 +123,13 @@ export const config = {
   },
   /** Who may post in the Public chat (announcements): comma-separated user IDs, case-insensitive. */
   adminIds: new Set(list(process.env.ADMIN_IDS).map((id) => id.toLowerCase())),
+  /**
+   * Second step for the admin dashboard (/admin): admins type this after signing in, since
+   * a 4-digit PIN alone is too weak for it. At least 12 characters, or the dashboard stays off.
+   */
+  adminPasscode: (process.env.ADMIN_PASSCODE ?? '').trim(),
+  /** How long the dashboard stays unlocked without use. */
+  adminUnlockMs: 15 * 60_000,
   /** The site's public address (e.g. https://call.example.com); derived from each request when unset. */
   publicUrl: process.env.PUBLIC_URL?.trim().replace(/\/+$/, '') ?? '',
 };

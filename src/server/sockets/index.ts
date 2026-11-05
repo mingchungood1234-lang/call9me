@@ -1,4 +1,5 @@
 import { CONNECT_ERRORS, USER_STATUSES } from '../../shared/types';
+import { AdminController } from '../controllers/AdminController';
 import { CallController } from '../controllers/CallController';
 import { ChatController } from '../controllers/ChatController';
 import { EmojiController } from '../controllers/EmojiController';
@@ -28,6 +29,8 @@ export function registerSocketHandlers(io: AppServer): void {
   const emoji = new EmojiController(io);
   const stickers = new StickerController(io);
   CallController.signaling = signaling;
+  AdminController.io = io;
+  AdminController.chat = chat;
   roomDirectory.init(io);
 
   // Handshake: the session cookie decides who this socket is. An ID can be open on a few devices at once.

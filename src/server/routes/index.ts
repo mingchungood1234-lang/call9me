@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import path from 'node:path';
 import { config } from '../config';
+import { AdminController } from '../controllers/AdminController';
 import { AuthController } from '../controllers/AuthController';
 import { CallController } from '../controllers/CallController';
 import { GoogleAuthController } from '../controllers/GoogleAuthController';
@@ -15,6 +16,7 @@ export const router = Router();
 // Views
 router.get('/', PageController.landing);
 router.get('/app', PageController.app);
+router.get('/admin', PageController.admin);
 
 // The service worker must be served from the root so its scope covers the whole site.
 router.get('/sw.js', (_req, res) => {
@@ -38,6 +40,15 @@ router.get('/api/version', (_req, res) => {
   res.set('Cache-Control', 'no-store');
   res.json({ version: appVersion() });
 });
+// Admin dashboard: admins only, unlocked with ADMIN_PASSCODE.
+router.post('/api/admin/unlock', AdminController.unlock);
+router.post('/api/admin/lock', AdminController.lock);
+router.get('/api/admin/overview', AdminController.overview);
+router.get('/api/admin/users', AdminController.users);
+router.post('/api/admin/users/:id/:action', AdminController.userAction);
+router.get('/api/admin/rooms', AdminController.rooms);
+router.post('/api/admin/rooms/:id/:action', AdminController.roomAction);
+router.get('/api/admin/log', AdminController.log);
 router.get('/api/users', UserController.list);
 router.get('/api/users/:id/availability', UserController.availability);
 router.post('/api/calls/:callId/decline', CallController.decline);

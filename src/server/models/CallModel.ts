@@ -53,6 +53,10 @@ export class CallModel {
     return id ? this.calls.get(id) : undefined;
   }
 
+  all(): Call[] {
+    return [...this.calls.values()];
+  }
+
   findByRoom(roomId: string): Call | undefined {
     return this.get(this.rooms.get(this.normalizeRoomId(roomId)));
   }

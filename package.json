@@ -5,7 +5,7 @@
   "private": true,
   "main": "dist/server/server.js",
   "scripts": {
-    "build:client": "esbuild src/client/landing.ts src/client/app.ts --bundle --splitting --format=esm --target=es2020 --outdir=public/js --chunk-names=chunks/[name]-[hash] --sourcemap",
+    "build:client": "esbuild src/client/landing.ts src/client/app.ts src/client/admin.ts --bundle --splitting --format=esm --target=es2020 --outdir=public/js --chunk-names=chunks/[name]-[hash] --sourcemap",
     "build:sw": "esbuild src/client/sw.ts --bundle --format=iife --target=es2020 --outfile=public/js/sw.js",
     "build:server": "tsc -p tsconfig.json",
     "build": "npm run typecheck && npm run build:client && npm run build:sw && npm run build:server",
