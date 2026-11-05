@@ -1026,6 +1026,44 @@ body.in-call .call-status { background: var(--primary-soft); color: var(--primar
 .stage.has-screen .remote-grid[data-count='1'] { grid-template-rows: minmax(0, 1fr); }
 .tile.is-sharing video { object-fit: contain; }
 
+/* Watching a share is optional: the sharer's tile has "Hide screen" / "Show screen". */
+.tile-screen-toggle {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1;
+  padding: 6px 12px;
+  border: 0;
+  border-radius: 9px;
+  background: var(--overlay);
+  color: #fff;
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+}
+.tile-screen-toggle[hidden] { display: none; }
+.tile-screen-toggle:hover { background: rgba(255, 255, 255, 0.28); }
+/* A hidden share: their picture, a "Screen hidden" badge, and "Show screen" under the picture. */
+.tile.screen-hidden::after {
+  content: 'Screen hidden';
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: var(--overlay);
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.tile.screen-hidden .tile-screen-toggle { top: auto; bottom: 44px; }
+
 /* Our own camera: a corner preview (tap it to make it the big picture). */
 .local-tile {
   position: absolute;
