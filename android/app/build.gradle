@@ -1,19 +1,22 @@
-// Call9me for Android: a Trusted Web Activity (TWA). The app opens the Call9me website
-// full screen in the user's Chrome engine, so calls (WebRTC), push notifications that ring a
-// closed app, Google sign-in and every website update work exactly as on the web, with no
-// browser bar. Build it with `npm run android:build` (see android/README.md).
+// Call9me for Android (Kotlin). The UI is the Call9me website in a WebView; the app adds what
+// a website can't do: calls ring with the app closed (Firebase push + full-screen call screen),
+// calls keep going in the background (foreground service), native permissions, splash and bars.
+// Build it with `npm run android:build` (see android/README.md).
 plugins {
     id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+}
+
+// Firebase: download google-services.json from the Firebase console into this folder.
+// Without it the app still works, but calls can't ring while the app is closed.
+def firebase = file('google-services.json').exists()
+if (firebase) {
+    apply plugin: 'com.google.gms.google-services'
 }
 
 // The site the app opens, e.g. `-PtwaHost=call.example.com` (hostname only, HTTPS is implied).
-def twaHost = (findProperty('twaHost') ?: System.getenv('TWA_HOST') ?: 'call.example.com').toString()
+def siteHost = (findProperty('twaHost') ?: System.getenv('TWA_HOST') ?: 'call.example.com').toString()
 def appId = (findProperty('applicationId') ?: 'com.call9me.app').toString()
-
-// Digital Asset Links: the app claims the site; the site's /.well-known/assetlinks.json claims
-// the app back (with this app's signing certificate). Both together hide the browser bar.
-def assetStatements = '[{\\"relation\\": [\\"delegate_permission/common.handle_all_urls\\"], ' +
-        '\\"target\\": {\\"namespace\\": \\"web\\", \\"site\\": \\"https://' + twaHost + '\\"}}]'
 
 // Release signing key, created on the first `npm run android:build` (keep it safe: updates
 // must be signed with the same key, or users have to uninstall first).
@@ -34,15 +37,9 @@ android {
         versionCode((findProperty('versionCode') ?: '1').toString().toInteger())
         versionName((findProperty('versionName') ?: '1.0.0').toString())
 
-        manifestPlaceholders = [
-                hostName         : twaHost,
-                // ?twa=1 tells the site it runs inside the app (views/partials/head.ejs), so it never
-                // sends app users to the "get the app" page meant for Android browsers.
-                launchUrl        : "https://${twaHost}/?twa=1".toString(),
-                providerAuthority: "${appId}.fileprovider".toString(),
-        ]
-        resValue 'string', 'assetStatements', assetStatements
-        resValue 'string', 'providerAuthority', "${appId}.fileprovider".toString()
+        buildConfigField 'String', 'SITE_HOST', "\"${siteHost}\""
+        buildConfigField 'boolean', 'FIREBASE', firebase.toString()
+        manifestPlaceholders = [hostName: siteHost]
     }
 
     signingConfigs {
@@ -69,10 +66,23 @@ android {
     }
 
     buildFeatures {
-        resValues true
+        buildConfig true
+    }
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17
     }
 }
 
 dependencies {
-    implementation 'com.google.androidbrowserhelper:androidbrowserhelper:2.7.4'
+    implementation 'androidx.core:core-ktx:1.17.0'
+    implementation 'androidx.appcompat:appcompat:1.7.1'
+    implementation 'androidx.activity:activity-ktx:1.10.1'
+    implementation 'androidx.core:core-splashscreen:1.0.1'
+    implementation 'androidx.webkit:webkit:1.14.0'
+    implementation 'androidx.browser:browser:1.9.0'
+    implementation platform('com.google.firebase:firebase-bom:34.0.0')
+    implementation 'com.google.firebase:firebase-messaging'
 }

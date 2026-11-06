@@ -1,4 +1,25 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="appName">Call9me</string>
+
+    <string name="channelCalls">Incoming calls</string>
+    <string name="channelCallsDescription">Rings when someone calls you, even when the app is closed.</string>
+    <string name="channelOngoing">Ongoing call</string>
+    <string name="channelOngoingDescription">Shown while a call keeps running in the background.</string>
+    <string name="channelMessages">Messages and missed calls</string>
+    <string name="channelMessagesDescription">New chat messages, missed calls and friend requests.</string>
+
+    <string name="incomingVideoCall">Incoming video call</string>
+    <string name="incomingVoiceCall">Incoming voice call</string>
+    <string name="answer">Answer</string>
+    <string name="decline">Decline</string>
+    <string name="hangUp">Hang up</string>
+    <string name="ongoingCall">Call in progress</string>
+    <string name="ongoingCallText">Tap to return to the call</string>
+
+    <string name="offlineTitle">Can\'t reach Call9me</string>
+    <string name="offlineText">Check your internet connection, then try again.</string>
+    <string name="retry">Try again</string>
+    <string name="permissionNeeded">Call9me needs this permission for calls. You can allow it in Settings.</string>
+    <string name="openSettings">Settings</string>
 </resources>

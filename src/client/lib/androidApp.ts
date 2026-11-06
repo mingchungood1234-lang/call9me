@@ -1,3 +1,4 @@
+import { inNativeApp } from './nativeApp';
 import { isStandalone } from './push';
 
 const IN_APP_KEY = 'call9me:inAndroidApp';
@@ -16,7 +17,7 @@ export function isAndroid(): boolean {
 
 /** True inside the installed Android app (not the PWA, which shares the browser's storage). */
 export function inAndroidApp(): boolean {
-  if (document.referrer.startsWith('android-app://')) return true;
+  if (inNativeApp() || document.referrer.startsWith('android-app://')) return true;
   try {
     return sessionStorage.getItem(IN_APP_KEY) === '1';
   } catch {

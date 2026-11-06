@@ -3,23 +3,35 @@ import type { Request, Response } from 'express';
 import type { LoginResponse } from '../../shared/types';
 import { isValidPin, isValidUserId, PIN_RULES, USER_ID_RULES } from '../../shared/validation';
 import { config } from '../config';
-import { parseCookies, requestUserId, sessionTokenFrom, setSessionCookie } from '../middleware/session';
+import { parseCookies, requestUserId, SESSION_COOKIE, sessionTokenFrom, setSessionCookie } from '../middleware/session';
 import { accountModel } from '../models/AccountModel';
 import { sessionModel } from '../models/SessionModel';
 import { allowRequest, clientIp, httpLimits } from '../services/RateLimiter';
+import { androidApp } from '../services/AndroidApp';
 import { safeNext } from './PageController';
 
 const AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 const TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const STATE_COOKIE = 'g_state';
 const PENDING_COOKIE = 'g_pending';
+/** Set in the Custom Tab while a sign-in for the Android app is in progress (see head.ejs). */
+export const APP_FLOW_COOKIE = 'c9m_app_flow';
 const FLOW_TTL_MS = 10 * 60 * 1000;
+/** How long the app has to pick up a sign-in handed over from the Custom Tab. */
+const HANDOFF_TTL_MS = 2 * 60 * 1000;
+
+/** The native Android app (WebView) adds "Call9meAndroid/<version>" to its user agent. */
+export function isAndroidAppRequest(req: Request): boolean {
+  return /\bCall9meAndroid\//.test(req.get('user-agent') ?? '');
+}
 
 interface Flow {
   verifier: string;
   next: string;
   /** Signed in already: link Google to this ID instead of signing in. */
   linkTo: string | null;
+  /** Started in the Android app: finish in a Custom Tab, then hand the session back to the app. */
+  app: boolean;
   expires: number;
 }
 
@@ -36,11 +48,52 @@ export interface PendingGoogle {
 const flows = new Map<string, Flow>();
 /** token (cookie) → Google account waiting for an ID. */
 const pending = new Map<string, PendingGoogle>();
+/** Android app: ticket (opened in the Custom Tab) → state of the flow it continues. */
+const tickets = new Map<string, { state: string; expires: number }>();
+/** Android app: one-time token (sent to the app) → the user it signs in. */
+const handoffs = new Map<string, { userId: string; expires: number }>();
 
 function prune(): void {
   const now = Date.now();
   for (const [k, v] of flows) if (v.expires < now) flows.delete(k);
   for (const [k, v] of pending) if (v.expires < now) pending.delete(k);
+  for (const [k, v] of tickets) if (v.expires < now) tickets.delete(k);
+  for (const [k, v] of handoffs) if (v.expires < now) handoffs.delete(k);
+}
+
+function googleAuthUrl(req: Request, state: string, verifier: string): string {
+  const params = new URLSearchParams({
+    client_id: config.google.clientId,
+    redirect_uri: redirectUri(req),
+    response_type: 'code',
+    scope: 'openid email profile',
+    state,
+    code_challenge: createHash('sha256').update(verifier).digest('base64url'),
+    code_challenge_method: 'S256',
+    prompt: 'select_account',
+  });
+  return `${AUTH_URL}?${params}`;
+}
+
+/**
+ * Ends a Custom Tab sign-in for the Android app: a page that opens the app (explicitly by
+ * package, so no other app can catch the token) at `path`, which signs the app in.
+ */
+function renderReturnToApp(req: Request, res: Response, path: string): void {
+  res.clearCookie(APP_FLOW_COOKIE, { path: '/' });
+  const pkg = androidApp()?.packageName ?? (process.env.ANDROID_PACKAGE?.trim() || 'com.call9me.app');
+  const intentUrl = `intent://${req.hostname}${path}#Intent;scheme=https;package=${pkg};end`;
+  res.set('Cache-Control', 'no-store');
+  res.set('Referrer-Policy', 'no-referrer');
+  res.render('app-return', { intentUrl });
+}
+
+/** One-time token the app redeems at /auth/app to get its own session for `userId`. */
+function handoffPath(userId: string): string {
+  prune();
+  const token = randomBytes(24).toString('base64url');
+  handoffs.set(token, { userId, expires: Date.now() + HANDOFF_TTL_MS });
+  return `/auth/app?token=${token}`;
 }
 
 export function googleEnabled(): boolean {
@@ -97,25 +150,73 @@ export class GoogleAuthController {
     prune();
     const state = randomBytes(16).toString('base64url');
     const verifier = randomBytes(32).toString('base64url');
+    const app = isAndroidAppRequest(req);
     flows.set(state, {
       verifier,
       next: safeNext(req.query.next),
       linkTo: requestUserId(req) ?? null,
+      app,
       expires: Date.now() + FLOW_TTL_MS,
     });
+    if (app) {
+      // Google refuses sign-in inside an app's WebView: the app opens this URL in a Custom Tab
+      // (a real browser), which continues the same flow.
+      const ticket = randomBytes(24).toString('base64url');
+      tickets.set(ticket, { state, expires: Date.now() + FLOW_TTL_MS });
+      res.redirect(`/auth/google/continue?ticket=${ticket}`);
+      return;
+    }
     // Ties the attempt to this browser (stops someone sending you their sign-in link).
     shortCookie(req, res, STATE_COOKIE, state);
-    const params = new URLSearchParams({
-      client_id: config.google.clientId,
-      redirect_uri: redirectUri(req),
-      response_type: 'code',
-      scope: 'openid email profile',
-      state,
-      code_challenge: createHash('sha256').update(verifier).digest('base64url'),
-      code_challenge_method: 'S256',
-      prompt: 'select_account',
-    });
-    res.redirect(`${AUTH_URL}?${params}`);
+    res.redirect(googleAuthUrl(req, state, verifier));
+  }
+
+  /** GET /auth/google/continue?ticket=… — in the Custom Tab: the app's sign-in goes on to Google. */
+  static continueInBrowser(req: Request, res: Response): void {
+    prune();
+    const ticket = typeof req.query.ticket === 'string' ? req.query.ticket : '';
+    const entry = tickets.get(ticket);
+    tickets.delete(ticket);
+    const flow = entry ? flows.get(entry.state) : undefined;
+    if (!entry || !flow) {
+      res.redirect('/?error=google');
+      return;
+    }
+    shortCookie(req, res, STATE_COOKIE, entry.state);
+    shortCookie(req, res, APP_FLOW_COOKIE, '1');
+    res.redirect(googleAuthUrl(req, entry.state, flow.verifier));
+  }
+
+  /** GET /auth/app-return — in the Custom Tab, after picking a new ID: move that sign-in to the app. */
+  static appReturn(req: Request, res: Response): void {
+    const userId = requestUserId(req);
+    if (!userId) {
+      res.redirect('/');
+      return;
+    }
+    // The browser's own session isn't needed: the app gets a fresh one.
+    sessionModel.destroy(sessionTokenFrom(req.headers.cookie));
+    res.clearCookie(SESSION_COOKIE, { path: '/' });
+    renderReturnToApp(req, res, handoffPath(userId));
+  }
+
+  /** GET /auth/app?token=… — in the app: redeem the one-time token for the app's own session. */
+  static appRedeem(req: Request, res: Response): void {
+    prune();
+    const token = typeof req.query.token === 'string' ? req.query.token : '';
+    const handoff = handoffs.get(token);
+    handoffs.delete(token);
+    if (!handoff || !isAndroidAppRequest(req)) {
+      res.redirect('/?error=google');
+      return;
+    }
+    if (accountModel.isSuspended(handoff.userId)) {
+      res.redirect('/?error=suspended');
+      return;
+    }
+    sessionModel.destroy(sessionTokenFrom(req.headers.cookie));
+    setSessionCookie(req, res, sessionModel.create(handoff.userId));
+    res.redirect('/app');
   }
 
   /** GET /auth/google/callback?code=…&state=… */
@@ -173,12 +274,18 @@ export class GoogleAuthController {
     // Signed in already: link this Google account to the current ID.
     if (flow.linkTo && accountModel.exists(flow.linkTo)) {
       accountModel.linkGoogle(flow.linkTo, sub, email);
-      res.redirect('/app?google=linked');
+      if (flow.app) renderReturnToApp(req, res, '/app?google=linked'); // the app is still signed in
+      else res.redirect('/app?google=linked');
       return;
     }
 
     const id = accountModel.idForGoogle(sub);
     if (id) {
+      if (flow.app) {
+        if (accountModel.isSuspended(id)) res.redirect('/?error=suspended');
+        else renderReturnToApp(req, res, handoffPath(id));
+        return;
+      }
       GoogleAuthController.signIn(req, res, id, flow.next);
       return;
     }
@@ -189,7 +296,8 @@ export class GoogleAuthController {
       sub,
       email,
       name: typeof claims.name === 'string' ? claims.name : '',
-      next: flow.next,
+      // App: after picking an ID here, the sign-in moves over to the app.
+      next: flow.app ? '/auth/app-return' : flow.next,
       expires: Date.now() + FLOW_TTL_MS,
     });
     shortCookie(req, res, PENDING_COOKIE, token);

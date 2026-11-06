@@ -1,3 +1,5 @@
+import './nativeApp'; // declares window.Call9meAndroid
+
 export type Theme = 'light' | 'dark';
 
 const STORAGE_KEY = 'call9me:theme';
@@ -17,6 +19,8 @@ function syncThemeColor(): void {
     meta.removeAttribute('media');
     meta.content = THEME_COLORS[currentTheme()];
   }
+  // The Android app colours its status and navigation bars to match.
+  window.Call9meAndroid?.setTheme(currentTheme() === 'dark');
 }
 
 /**

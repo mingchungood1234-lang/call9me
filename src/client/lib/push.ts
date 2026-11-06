@@ -1,3 +1,5 @@
+import { inNativeApp, nativeBridge, onNativeCommands } from './nativeApp';
+
 export type PushStatus = 'unsupported' | 'needs-install' | 'denied' | 'off' | 'on';
 
 function isIos(): boolean {
@@ -6,6 +8,7 @@ function isIos(): boolean {
 
 export function isStandalone(): boolean {
   return (
+    inNativeApp() ||
     window.matchMedia('(display-mode: standalone)').matches ||
     (navigator as Navigator & { standalone?: boolean }).standalone === true
   );
@@ -40,13 +43,72 @@ async function postJson(url: string, body: unknown): Promise<Response> {
 }
 
 /**
+ * The Android app's notifications: Firebase Cloud Messaging, so calls ring with the app
+ * closed (on a native full-screen call screen). The page registers the app's token with
+ * the server under the signed-in user.
+ */
+class AndroidPush {
+  /** The server has no Firebase set up: notifications can't work in the app. */
+  private serverOff = false;
+
+  private status(): PushStatus {
+    if (this.serverOff) return 'unsupported';
+    const status = nativeBridge!.pushStatus(); // "off" also when turned off here (kept by the app)
+    return status === 'on' || status === 'denied' || status === 'off' ? status : 'unsupported';
+  }
+
+  private async register(token: string): Promise<boolean> {
+    if (!token) return false;
+    const res = await postJson('/api/push/android', { token }).catch(() => null);
+    if (res?.status === 503) this.serverOff = true;
+    return !!res?.ok;
+  }
+
+  async init(): Promise<PushStatus> {
+    if (this.status() === 'on') await this.register(nativeBridge!.pushToken());
+    return this.status();
+  }
+
+  async current(): Promise<PushStatus> {
+    return this.status();
+  }
+
+  async enable(): Promise<PushStatus> {
+    const { status, token } = await new Promise<{ status: string; token: string }>((resolve) => {
+      onNativeCommands({ pushResult: (s, t) => resolve({ status: s, token: t }) });
+      nativeBridge!.enablePush();
+    });
+    if (status !== 'on') return this.status();
+    if (!(await this.register(token))) {
+      if (this.serverOff) return 'unsupported';
+      throw new Error('Server rejected the token');
+    }
+    return 'on';
+  }
+
+  async disable(): Promise<PushStatus> {
+    nativeBridge!.disablePush();
+    await this.detach();
+    return this.status();
+  }
+
+  async detach(): Promise<void> {
+    const token = nativeBridge!.pushToken();
+    if (token) await postJson('/api/push/android/remove', { token }).catch(() => {});
+  }
+}
+
+/**
  * Web Push for the signed-in user. iOS only allows push for PWAs added to the
- * home screen (iOS 16.4+), which is reported as "needs-install".
+ * home screen (iOS 16.4+), which is reported as "needs-install". In the Android app,
+ * notifications go through the app instead (AndroidPush).
  */
 export class PushNotifications {
   private registration: ServiceWorkerRegistration | null = null;
+  private readonly android = nativeBridge ? new AndroidPush() : null;
 
   async init(): Promise<PushStatus> {
+    if (this.android) return this.android.init();
     this.registration = await registerServiceWorker();
     if ((await this.status()) !== 'on') return this.status();
 
@@ -68,6 +130,7 @@ export class PushNotifications {
    * Call from a tap (iOS may require it). @returns whether it was replaced.
    */
   async repair(): Promise<boolean> {
+    if (this.android) return false;
     const sub = await this.registration?.pushManager.getSubscription();
     if (!sub || (await this.matchesServerKey(sub))) return false;
     await postJson('/api/push/unsubscribe', { endpoint: sub.endpoint }).catch(() => {});
@@ -100,6 +163,7 @@ export class PushNotifications {
   }
 
   async status(): Promise<PushStatus> {
+    if (this.android) return this.android.current();
     if (!this.registration || !('PushManager' in window) || !('Notification' in window)) {
       return isIos() && !isStandalone() ? 'needs-install' : 'unsupported';
     }
@@ -110,6 +174,7 @@ export class PushNotifications {
 
   /** Must be called from a user gesture (button click), required by iOS. */
   async enable(): Promise<PushStatus> {
+    if (this.android) return this.android.enable();
     if (!this.registration) return this.status();
     const permission = await Notification.requestPermission();
     if (permission !== 'granted') return this.status();
@@ -126,6 +191,7 @@ export class PushNotifications {
   }
 
   async disable(): Promise<PushStatus> {
+    if (this.android) return this.android.disable();
     const sub = await this.registration?.pushManager.getSubscription();
     if (sub) {
       await postJson('/api/push/unsubscribe', { endpoint: sub.endpoint }).catch(() => {});
@@ -136,6 +202,7 @@ export class PushNotifications {
 
   /** On sign-out: stop pushes for this user to this device, but keep the browser permission. */
   async detach(): Promise<void> {
+    if (this.android) return this.android.detach();
     const sub = await this.registration?.pushManager.getSubscription();
     if (sub) await postJson('/api/push/unsubscribe', { endpoint: sub.endpoint }).catch(() => {});
   }

@@ -1,9 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Match the site's theme-color (views/partials/head.ejs) in light and dark mode. -->
+    <!-- The site's theme-color (views/partials/head.ejs), light and dark. -->
     <color name="barLight">#F3F5FB</color>
     <color name="barDark">#0B0E1A</color>
+    <color name="windowBackground">@color/barLight</color>
     <color name="splashBackground">#0F1220</color>
-    <!-- Middle of the icon gradient (#6c7cff → #a855f7). -->
+    <color name="text">#1B1F33</color>
+    <color name="muted">#646B88</color>
+    <!-- Brand: the icon gradient (#6c7cff → #a855f7) and the colour between them. -->
+    <color name="brand">#8A68FB</color>
+    <color name="brandStart">#6C7CFF</color>
+    <color name="brandEnd">#A855F7</color>
     <color name="iconBackground">#8A68FB</color>
+    <color name="answer">#22C55E</color>
+    <color name="decline">#EF4444</color>
 </resources>

@@ -5,6 +5,8 @@ import { config } from './config';
 import { avatarModel } from './models/AvatarModel';
 import { emojiModel } from './models/EmojiModel';
 import { stickerModel } from './models/StickerModel';
+import { APP_FLOW_COOKIE, isAndroidAppRequest } from './controllers/GoogleAuthController';
+import { parseCookies } from './middleware/session';
 import { router } from './routes';
 import { androidApp } from './services/AndroidApp';
 import { appVersion } from './services/AppVersion';
@@ -84,10 +86,13 @@ export function createApp(): express.Express {
     }),
   );
   // Views tag asset URLs and the page with the build version (cache busting + update checks).
-  app.use((_req, res, next) => {
+  app.use((req, res, next) => {
     res.locals.assetVersion = appVersion();
     // Android visitors are offered the app (lib/androidApp.ts) when an APK has been built.
     res.locals.androidApp = androidApp() !== null;
+    // Never send the app itself, or its Custom Tab sign-in, to the "get the app" page.
+    res.locals.skipAndroidGate =
+      isAndroidAppRequest(req) || !!parseCookies(req.headers.cookie)[APP_FLOW_COOKIE];
     next();
   });
   app.use(router);

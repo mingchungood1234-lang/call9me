@@ -148,8 +148,6 @@ const ANDROID = [
   ['drawable-nodpi/ic_launcher_monochrome.png', 432, { background: false, radius: 0, glyphScale: ADAPTIVE_GLYPH }],
   // Status-bar notification icon (24dp, white on transparent).
   ['drawable-xxxhdpi/ic_notification.png', 96, { background: false, radius: 0, glyphScale: 0.7 }],
-  // Splash screen while the app starts (128dp).
-  ['drawable-xxxhdpi/splash.png', 512, { background: true, radius: 0.22, glyphScale: 0.55 }],
 ];
 for (const [name, size, opts] of ANDROID) {
   const file = path.join(RES, name);

@@ -1,13 +1,13 @@
 import type { Request, Response } from 'express';
 import { PIN_RULES, USER_ID_RULES } from '../../shared/validation';
 import { config, isAdmin } from '../config';
-import { refreshSessionCookie, requestUserId } from '../middleware/session';
+import { parseCookies, refreshSessionCookie, requestUserId } from '../middleware/session';
 import { accountModel } from '../models/AccountModel';
 import { androidApp } from '../services/AndroidApp';
 import { mailEnabled } from '../services/Mailer';
 import { pinResets } from '../services/PinReset';
 import { adminPasscodeSet } from './AdminController';
-import { googleEnabled, pendingGoogleFor, suggestId } from './GoogleAuthController';
+import { APP_FLOW_COOKIE, googleEnabled, pendingGoogleFor, suggestId } from './GoogleAuthController';
 
 const ERROR_MESSAGES: Record<string, string> = {
   session: 'Please sign in to continue.',
@@ -107,6 +107,11 @@ export class PageController {
       // Keep the target (e.g. a call-room invite link) so sign-in can return to it.
       const next = req.originalUrl !== '/app' ? `&next=${encodeURIComponent(req.originalUrl)}` : '';
       res.redirect(`/?error=session${next}`);
+      return;
+    }
+    // A Custom Tab finishing "Continue with Google" for the Android app: hand the sign-in to the app.
+    if (parseCookies(req.headers.cookie)[APP_FLOW_COOKIE]) {
+      res.redirect('/auth/app-return');
       return;
     }
     // Escape "<" so the JSON can't break out of its <script> tag.

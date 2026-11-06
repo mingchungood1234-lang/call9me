@@ -17,6 +17,7 @@ import { $, avatar, avatarUrlOf, el, formatDuration, hueFor, onAvatarsChange, pa
 import { squareImage } from './lib/images';
 import { MobileTabs } from './lib/MobileTabs';
 import { androidDownloadUrl } from './lib/androidApp';
+import { nativeBridge, onNativeCommands } from './lib/nativeApp';
 import { showInstallHint } from './lib/installHint';
 import { isStandalone, PushNotifications, type PushStatus } from './lib/push';
 import { NOT_CONNECTED, withTimeout, type AppSocket } from './lib/socket';
@@ -142,6 +143,8 @@ const androidGet = document.getElementById('android-get');
 if (androidGet && androidDownloadUrl()) androidGet.hidden = false;
 let takenRetries = 0;
 let hasConnected = false;
+/** The Android app disconnected us while in the background: reconnect without a "Reconnected" toast. */
+let pausedInBackground = false;
 
 // The server only sends push notifications while the app is NOT on screen.
 function reportVisibility(): void {
@@ -325,7 +328,8 @@ socket.on('connect', () => {
   reportVisibility();
   callHistory.load();
   if (hasConnected) {
-    toast('Reconnected', 'success');
+    if (!pausedInBackground) toast('Reconnected', 'success');
+    pausedInBackground = false;
     chat.rejoin();
   } else {
     prefillCallRoomFromUrl();
@@ -349,7 +353,8 @@ socket.on('disconnect', (reason) => {
   // Requests queued while offline belong to a session the server has already dropped
   // (it ends our calls); replaying them after reconnecting would do stale things.
   socket.sendBuffer = [];
-  if (calls.state !== 'idle') toast('Lost connection to server — call ended.', 'error');
+  // (A ringing call left behind by the Android app going to the background rings natively instead.)
+  if (calls.state !== 'idle' && !pausedInBackground) toast('Lost connection to server — call ended.', 'error');
   calls.reset();
   // The server closed this connection itself, so socket.io won't retry on its own.
   if (reason === 'io server disconnect') socket.connect();
@@ -940,6 +945,8 @@ function renderCallState(info: CallInfo): void {
   const wasIdle = callsInfo.state === 'idle';
   callsInfo = info;
   const { state, roomId, participants, invited, away, incomingFrom } = info;
+  // Android app: a call keeps running in the background (foreground service + call notification).
+  nativeBridge?.callState(JSON.stringify({ state, video: info.video, peers: participants, roomId }));
 
   stage.dataset.state = state;
   document.body.classList.toggle('in-call', state === 'in-call');
@@ -1534,6 +1541,24 @@ $('#leave-btn').addEventListener('click', async () => {
   window.location.href = '/';
 });
 window.addEventListener('pagehide', () => calls.hangUp());
+
+// ---- Android app (android/): its call screen, call notification and background handling ----
+onNativeCommands({
+  answer: (callId) => setPendingAnswer(`/app?answer=${encodeURIComponent(callId)}`),
+  hangUp: () => calls.hangUp(),
+  // In the background (and not in a call) the app goes quiet: calls then ring through the
+  // app's own notifications (Firebase), not this page, so they don't ring twice.
+  background: (away) => {
+    if (away) {
+      if (callsInfo.state === 'in-call' || !socket.connected) return;
+      pausedInBackground = true;
+      socket.disconnect();
+      renderConnection();
+    } else if (!socket.connected) {
+      reconnectNow();
+    }
+  },
+});
 window.matchMedia('(max-width: 720px)').addEventListener('change', updateCallBadge);
 
 renderCallState(callsInfo);

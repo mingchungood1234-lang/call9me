@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The incoming call screen: the site's dark background with the brand glow. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape>
+            <gradient
+                android:angle="270"
+                android:endColor="#0B0E1A"
+                android:startColor="#1E1846" />
+        </shape>
+    </item>
+    <item>
+        <shape>
+            <gradient
+                android:centerY="0.3"
+                android:endColor="#000B0E1A"
+                android:gradientRadius="70%p"
+                android:startColor="#556C7CFF"
+                android:type="radial" />
+        </shape>
+    </item>
+</layer-list>

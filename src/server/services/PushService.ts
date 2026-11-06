@@ -3,9 +3,11 @@ import path from 'node:path';
 import webpush from 'web-push';
 import type { PushPayload, PushTestResult } from '../../shared/types';
 import { config } from '../config';
+import { fcmTokenModel } from '../models/FcmTokenModel';
 import { pushSubscriptionModel } from '../models/PushSubscriptionModel';
 import { userModel } from '../models/UserModel';
 import { userStatusModel } from '../models/UserStatusModel';
+import { fcm } from './Fcm';
 
 interface VapidKeys {
   publicKey: string;
@@ -71,8 +73,13 @@ export class PushService {
     webpush.setVapidDetails(config.vapidSubject, keys.publicKey, keys.privateKey);
   }
 
+  /** Whether the user can be reached while offline: a browser/PWA subscription or the Android app. */
   hasSubscribers(userId: string): boolean {
-    return pushSubscriptionModel.forUser(userId).length > 0;
+    return pushSubscriptionModel.forUser(userId).length > 0 || this.androidTokens(userId).length > 0;
+  }
+
+  private androidTokens(userId: string): string[] {
+    return fcm.enabled ? fcmTokenModel.forUser(userId) : [];
   }
 
   /**
@@ -84,7 +91,8 @@ export class PushService {
     if (userModel.isVisible(userId)) return;
     if (userStatusModel.get(userId) === 'dnd') return; // Do not disturb: no notifications at all
     const subscriptions = pushSubscriptionModel.forUser(userId);
-    if (subscriptions.length === 0) return;
+    const androidTokens = this.androidTokens(userId);
+    if (subscriptions.length === 0 && androidTokens.length === 0) return;
 
     if (throttleMs > 0) {
       const key = `${userId.toLowerCase()}|${payload.tag}`;
@@ -93,6 +101,18 @@ export class PushService {
       this.lastSent.set(key, Date.now());
     }
     for (const subscription of subscriptions) void this.send(subscription, payload);
+    for (const token of androidTokens) void this.sendAndroid(token, payload);
+  }
+
+  /**
+   * An invite stopped ringing (answered, declined, cancelled, timed out): the Android app
+   * stops its ringtone and call screen. Sent even while the app is visible, since the phone
+   * may ring on its own.
+   */
+  stopRinging(userId: string, callId: string): void {
+    for (const token of this.androidTokens(userId)) {
+      void this.sendAndroidData(token, { type: 'call-end', callId }, { high: true, ttlSeconds: 60 });
+    }
   }
 
   /** Sends a test notification to all of a user's devices and reports what each push service answered. */
@@ -104,7 +124,41 @@ export class PushService {
       tag: 'test',
       url: '/app',
     };
-    return Promise.all(pushSubscriptionModel.forUser(userId).map((s) => this.send(s, payload)));
+    return Promise.all([
+      ...pushSubscriptionModel.forUser(userId).map((s) => this.send(s, payload)),
+      ...this.androidTokens(userId).map((t) => this.sendAndroid(t, payload)),
+    ]);
+  }
+
+  /** The Android app gets data messages and builds its own notifications (full-screen call, etc.). */
+  private sendAndroid(token: string, payload: PushPayload): Promise<PushTestResult> {
+    const data: Record<string, string> = {
+      type: payload.type,
+      title: payload.title,
+      body: payload.body,
+      tag: payload.tag,
+      url: payload.url,
+    };
+    if (payload.callId) data.callId = payload.callId;
+    if (payload.icon) data.icon = payload.icon;
+    if (payload.from) data.from = payload.from;
+    if (payload.video !== undefined) data.video = payload.video ? '1' : '0';
+    const call = payload.type === 'call';
+    return this.sendAndroidData(token, data, {
+      high: call,
+      ttlSeconds: call ? Math.ceil(config.offlineRingTimeoutMs / 1000) : 60 * 60,
+    });
+  }
+
+  private async sendAndroidData(
+    token: string,
+    data: Record<string, string>,
+    opts: { high: boolean; ttlSeconds: number },
+  ): Promise<PushTestResult> {
+    const result = await fcm.send(token, data, opts);
+    if (result.unregistered) fcmTokenModel.remove(token);
+    if (!result.ok) console.warn(`[fcm] push rejected: ${result.status} ${result.error ?? ''}`);
+    return { service: 'fcm.googleapis.com (Android app)', ok: result.ok, status: result.status, error: result.error };
   }
 
   private async send(subscription: webpush.PushSubscription, payload: PushPayload): Promise<PushTestResult> {

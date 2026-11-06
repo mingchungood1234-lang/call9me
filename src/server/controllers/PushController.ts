@@ -2,7 +2,9 @@ import type { Request, Response } from 'express';
 import type { PushSubscriptionJSON } from '../../shared/types';
 import { requestUserId } from '../middleware/session';
 import { CallController } from './CallController';
+import { fcmTokenModel } from '../models/FcmTokenModel';
 import { pushSubscriptionModel } from '../models/PushSubscriptionModel';
+import { fcm } from '../services/Fcm';
 import { pushService } from '../services/PushService';
 
 /** Decoded byte length of a base64url string, or -1 if it isn't base64url. */
@@ -59,6 +61,36 @@ export class PushController {
     }
     const results = await pushService.sendTest(userId);
     res.json({ ok: results.length > 0 && results.every((r) => r.ok), results });
+  }
+
+  /** POST /api/push/android { token } — the Android app's Firebase token for this user (requires a session). */
+  static androidRegister(req: Request, res: Response): void {
+    const userId = requestUserId(req);
+    if (!userId) {
+      res.status(401).json({ ok: false, error: 'Not signed in' });
+      return;
+    }
+    const { token } = (req.body ?? {}) as { token?: unknown };
+    if (typeof token !== 'string' || !/^[\w:.-]{20,4096}$/.test(token)) {
+      res.status(400).json({ ok: false, error: 'Invalid token' });
+      return;
+    }
+    if (!fcm.enabled) {
+      res.status(503).json({ ok: false, error: 'Android push is not set up on this server' });
+      return;
+    }
+    fcmTokenModel.add(userId, token);
+    res.json({ ok: true });
+    CallController.signaling?.broadcastUsers();
+  }
+
+  /** POST /api/push/android/remove { token } — e.g. on sign-out or when notifications are turned off. */
+  static androidRemove(req: Request, res: Response): void {
+    const userId = requestUserId(req);
+    const { token } = (req.body ?? {}) as { token?: unknown };
+    if (userId && typeof token === 'string') fcmTokenModel.removeForUser(userId, token);
+    res.json({ ok: true });
+    CallController.signaling?.broadcastUsers();
   }
 
   /** POST /api/push/unsubscribe { endpoint } */

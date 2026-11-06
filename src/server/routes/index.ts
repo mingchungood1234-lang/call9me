@@ -49,6 +49,10 @@ router.get('/.well-known/assetlinks.json', (_req, res) => {
 // "Continue with Google" (only works when GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET are set)
 router.get('/auth/google', GoogleAuthController.start);
 router.get('/auth/google/callback', GoogleAuthController.callback);
+// The Android app: Google sign-in runs in a Custom Tab, then hands the session back to the app.
+router.get('/auth/google/continue', GoogleAuthController.continueInBrowser);
+router.get('/auth/app-return', GoogleAuthController.appReturn);
+router.get('/auth/app', GoogleAuthController.appRedeem);
 
 // JSON API
 router.post('/api/login', AuthController.login);
@@ -82,4 +86,6 @@ router.post('/api/calls/:callId/decline', CallController.decline);
 router.get('/api/push/key', PushController.publicKey);
 router.post('/api/push/subscribe', PushController.subscribe);
 router.post('/api/push/unsubscribe', PushController.unsubscribe);
+router.post('/api/push/android', PushController.androidRegister);
+router.post('/api/push/android/remove', PushController.androidRemove);
 router.post('/api/push/test', PushController.test);

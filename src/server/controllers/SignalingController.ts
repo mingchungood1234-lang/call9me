@@ -36,6 +36,7 @@ function missedCallPush(from: string): PushPayload {
     tag: `call-${from}`,
     url: '/app',
     icon: avatarModel.urlOf(from),
+    from,
   };
 }
 
@@ -53,6 +54,8 @@ function callPush(call: Call, from: string): PushPayload {
     url: `/app?answer=${call.id}`,
     callId: call.id,
     icon: avatarModel.urlOf(from), // the caller's picture (Android/desktop; iOS always shows the app icon)
+    from,
+    video: call.video,
   };
 }
 
@@ -455,6 +458,7 @@ export class SignalingController {
 
   private expireInvite(callId: string, userId: string): void {
     this.inviteTimers.delete(`${callId}|${userId}`);
+    pushService.stopRinging(userId, callId);
     const call = callModel.get(callId);
     const invite = call?.invited.get(userId);
     if (!call || !invite) return;
@@ -577,7 +581,9 @@ export class SignalingController {
     others.emit('call:elsewhere', this.elsewhere(user));
   }
 
+  /** Every invite that ends (answered, declined, cancelled) passes here: the Android app stops ringing too. */
   private clearInviteTimer(callId: string, userId: string): void {
+    pushService.stopRinging(userId, callId);
     const key = `${callId}|${userId}`;
     const timer = this.inviteTimers.get(key);
     if (timer) clearTimeout(timer);

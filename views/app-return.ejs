@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <%- include('partials/head', { title: 'Call9me — Back to the app' }) %>
+</head>
+<body class="landing">
+  <div class="bg-blobs" aria-hidden="true"><span></span><span></span><span></span></div>
+  <main class="landing-card get-app">
+    <div class="brand-mark" aria-hidden="true">9</div>
+    <h1>You're signed in</h1>
+    <p class="tagline">Going back to the Call9me app…</p>
+    <a id="return-btn" class="btn btn-primary btn-block" href="<%= intentUrl %>">Open Call9me</a>
+  </main>
+  <script>
+    // Opens the app straight away; the button is there if the browser wants a tap first.
+    location.href = <%- JSON.stringify(intentUrl).replace(/</g, '\\u003c') %>;
+  </script>
+</body>
+</html>

@@ -494,6 +494,9 @@ export interface PushPayload {
   callId?: string;
   /** Picture shown in the notification (e.g. the caller's profile picture); the app icon if unset. */
   icon?: string;
+  /** Calls: who is calling, and whether it's a video call (the Android app's call screen shows them). */
+  from?: string;
+  video?: boolean;
 }
 
 /** What a push service (Apple, Google, Mozilla…) answered for one device. */

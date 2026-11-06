@@ -1,121 +1,86 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- Android 13+: lets the site's notifications (incoming calls, messages) show as this app's. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- Calls: camera and microphone (asked when a call needs them); WebRTC audio routing. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <!-- Notifications, the full-screen incoming call screen, and ringing. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- Background calls: a foreground service keeps the call (mic/camera) running. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
 
     <application
-        android:allowBackup="true"
+        android:name=".Call9meApp"
+        android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:label="@string/appName"
-        android:manageSpaceActivity="com.google.androidbrowserhelper.trusted.ManageDataLauncherActivity"
         android:supportsRtl="true"
+        android:usesCleartextTraffic="false"
         android:theme="@style/Theme.Call9me">
 
-        <meta-data
-            android:name="asset_statements"
-            android:resource="@string/assetStatements" />
-
         <activity
-            android:name="com.google.androidbrowserhelper.trusted.LauncherActivity"
-            android:alwaysRetainTaskState="true"
+            android:name=".MainActivity"
             android:exported="true"
-            android:label="@string/appName">
-
-            <meta-data
-                android:name="android.support.customtabs.trusted.DEFAULT_URL"
-                android:value="${launchUrl}" />
-            <meta-data
-                android:name="android.support.customtabs.trusted.STATUS_BAR_COLOR"
-                android:resource="@color/barLight" />
-            <meta-data
-                android:name="android.support.customtabs.trusted.STATUS_BAR_COLOR_DARK"
-                android:resource="@color/barDark" />
-            <meta-data
-                android:name="android.support.customtabs.trusted.NAVIGATION_BAR_COLOR"
-                android:resource="@color/barLight" />
-            <meta-data
-                android:name="android.support.customtabs.trusted.NAVIGATION_BAR_COLOR_DARK"
-                android:resource="@color/barDark" />
-            <meta-data
-                android:name="android.support.customtabs.trusted.SPLASH_IMAGE_DRAWABLE"
-                android:resource="@drawable/splash" />
-            <meta-data
-                android:name="android.support.customtabs.trusted.SPLASH_SCREEN_BACKGROUND_COLOR"
-                android:resource="@color/splashBackground" />
-            <meta-data
-                android:name="android.support.customtabs.trusted.SPLASH_SCREEN_FADE_OUT_DURATION"
-                android:value="300" />
-            <meta-data
-                android:name="android.support.customtabs.trusted.FILE_PROVIDER_AUTHORITY"
-                android:value="${providerAuthority}" />
-            <meta-data
-                android:name="android.support.customtabs.trusted.SCREEN_ORIENTATION"
-                android:value="any" />
-            <!-- Without a TWA-capable browser, open in a Custom Tab (calls and push still work). -->
-            <meta-data
-                android:name="android.support.customtabs.trusted.FALLBACK_STRATEGY"
-                android:value="customtabs" />
+            android:launchMode="singleTask"
+            android:theme="@style/Theme.Call9me.Starting"
+            android:windowSoftInputMode="adjustResize"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation|uiMode|density|fontScale">
 
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
-            <!-- Call links (e.g. https://host/app?call=room) open in the app. -->
+            <!-- Call links (https://host/app?call=room) and the Google sign-in hand-back open here. -->
             <intent-filter android:autoVerify="true">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data
-                    android:scheme="https"
-                    android:host="${hostName}" />
+                <data android:scheme="https" android:host="${hostName}" />
             </intent-filter>
         </activity>
 
-        <!-- Required: on every launch the library enables this activity and adds a "Site settings"
-             shortcut for it. If it isn't declared here, Android throws "Unknown component" and the
-             app crashes at start ("Call9me keeps stopping"). It also backs "Manage space"/"Clear
-             data" in the app's system settings. -->
+        <!-- Full-screen incoming call (also over the lock screen). -->
         <activity
-            android:name="com.google.androidbrowserhelper.trusted.ManageDataLauncherActivity"
-            android:exported="false">
-            <meta-data
-                android:name="android.support.customtabs.trusted.MANAGE_SPACE_URL"
-                android:value="${launchUrl}" />
-        </activity>
-
-        <activity
-            android:name="com.google.androidbrowserhelper.trusted.FocusActivity"
-            android:exported="false" />
-
-        <activity
-            android:name="com.google.androidbrowserhelper.trusted.NotificationPermissionRequestActivity"
-            android:exported="false" />
-
-        <provider
-            android:name="androidx.core.content.FileProvider"
-            android:authorities="${providerAuthority}"
+            android:name=".IncomingCallActivity"
             android:exported="false"
-            android:grantUriPermissions="true">
-            <meta-data
-                android:name="android.support.FILE_PROVIDER_PATHS"
-                android:resource="@xml/filepaths" />
-        </provider>
+            android:excludeFromRecents="true"
+            android:launchMode="singleTop"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:taskAffinity="com.call9me.app.incoming"
+            android:theme="@style/Theme.Call9me.Call" />
 
-        <!-- Notification delegation: the site's web push notifications appear as Call9me's. -->
+        <!-- Keeps a call alive in the background, with an "ongoing call" notification. -->
         <service
-            android:name=".DelegationService"
-            android:enabled="true"
-            android:exported="true">
-            <meta-data
-                android:name="android.support.customtabs.trusted.SMALL_ICON"
-                android:resource="@drawable/ic_notification" />
+            android:name=".CallService"
+            android:exported="false"
+            android:foregroundServiceType="microphone|camera" />
+
+        <!-- Firebase Cloud Messaging: incoming calls and messages while the app is closed. -->
+        <service
+            android:name=".PushService"
+            android:exported="false">
             <intent-filter>
-                <action android:name="android.support.customtabs.trusted.TRUSTED_WEB_ACTIVITY_SERVICE" />
-                <category android:name="android.intent.category.DEFAULT" />
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
             </intent-filter>
         </service>
+
+        <!-- Decline (incoming call) and Hang up (ongoing call) notification buttons. -->
+        <receiver
+            android:name=".CallActionReceiver"
+            android:exported="false" />
     </application>
 </manifest>

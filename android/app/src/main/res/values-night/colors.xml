@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="windowBackground">@color/barDark</color>
+    <color name="text">#E8EAF6</color>
+    <color name="muted">#9095B2</color>
+</resources>

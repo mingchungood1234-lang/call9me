@@ -29,6 +29,7 @@
 <meta name="app-version" content="<%= assetVersion %>">
 <% if (locals.androidApp) { %>
 <meta name="android-app" content="/download/android">
+<% if (!locals.skipAndroidGate) { %>
 <script>
   // Call9me on Android is the app (android/), not the website or a PWA. Runs before anything else:
   // inside the app (launched with ?twa=1, or with an android-app:// referrer) remember that for
@@ -55,4 +56,5 @@
     location.replace('/get-app?next=' + encodeURIComponent(location.pathname + location.search));
   })();
 </script>
+<% } %>
 <% } %>
