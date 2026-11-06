@@ -235,6 +235,8 @@ export interface ClientToServerEvents {
   /** We've seen everything in this room so far (resets its unread count). */
   'chat:read': (payload: { roomId: string }) => void;
   'chat:message': (payload: { roomId: string; text: string }, ack: Ack) => void;
+  /** We started (or stopped) typing in a room. Ignored while our status is invisible. */
+  'chat:typing': (payload: { roomId: string; typing: boolean }) => void;
 
   /** Our call history, newest first. */
   'history:list': (ack: Ack<{ entries: CallHistoryEntry[] }>) => void;
@@ -318,6 +320,8 @@ export interface ServerToClientEvents {
 
   'chat:message': (message: ChatMessage) => void;
   'chat:members': (payload: { roomId: string; members: string[] }) => void;
+  /** Someone in a room started or stopped typing (clients also expire it after a few seconds). */
+  'chat:typing': (payload: { roomId: string; userId: string; typing: boolean }) => void;
   /** Our chat list (the Public chat first, then the rooms we've joined); sent on connect. */
   'chat:rooms': (rooms: ChatRoomPreview[]) => void;
   /** Someone tagged us (`@ourId`) in a room's chat. */

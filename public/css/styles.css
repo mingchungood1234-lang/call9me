@@ -599,6 +599,40 @@ button.me-chip:focus-visible { outline: 2px solid var(--primary); outline-offset
 .update-banner-actions { display: flex; gap: 8px; margin-left: auto; }
 /* Clear of the phone tab bar (portrait and landscape); on desktop it just floats a little higher. */
 body.app .update-banner { bottom: calc(var(--tabbar-h) + 12px + env(safe-area-inset-bottom)); }
+
+/* "Add to Home Screen" invitation (see lib/installHint.ts) */
+.install-hint {
+  position: fixed;
+  left: 16px;
+  right: 16px;
+  bottom: calc(16px + env(safe-area-inset-bottom));
+  z-index: 95;
+  max-width: 420px;
+  margin-inline: auto;
+  padding: 16px;
+  border-radius: calc(var(--radius) + 4px);
+  background:
+    linear-gradient(var(--bg-elev), var(--bg-elev)) padding-box,
+    var(--gradient) border-box;
+  border: 1.5px solid transparent;
+  color: var(--text);
+  box-shadow: var(--shadow-lg), 0 12px 40px -12px var(--primary);
+  animation: rise 0.4s cubic-bezier(0.2, 0.9, 0.3, 1.2);
+  transition: opacity 0.25s, transform 0.25s;
+}
+.install-hint.is-leaving { opacity: 0; transform: translateY(12px); }
+body.app .install-hint { bottom: calc(var(--tabbar-h) + 12px + env(safe-area-inset-bottom)); }
+.install-hint-head { display: flex; gap: 14px; align-items: flex-start; }
+.install-hint-icon { flex: none; width: 46px; height: 46px; border-radius: 14px; font-size: 1.35rem; }
+.install-hint-body { min-width: 0; }
+.install-hint-title { margin: 0 0 4px; font-size: 1rem; font-weight: 750; line-height: 1.3; }
+.install-hint-text { margin: 0; color: var(--muted); font-size: 0.87rem; line-height: 1.45; }
+.install-hint-steps { margin: 10px 0 0; padding-left: 20px; font-size: 0.85rem; line-height: 1.7; }
+.install-hint-steps strong { color: var(--primary); }
+.install-hint-glyph { width: 16px; height: 16px; vertical-align: -3px; color: var(--primary); }
+.install-hint-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+.install-hint-go, .install-hint-ok { background: var(--gradient); border: none; }
+
 .conn-spinner {
   flex: none;
   width: 14px;
@@ -1377,6 +1411,33 @@ body.in-call:not(.call-minimized) { overflow: hidden; }
 .chat-item-time { flex: none; font-size: 0.72rem; color: var(--muted); }
 .chat-item-preview { flex: 1; min-width: 0; font-size: 0.82rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .chat-item.has-unread .chat-item-preview { color: var(--text); font-weight: 500; }
+.chat-item-preview.is-typing, .chat-item.has-unread .chat-item-preview.is-typing { color: var(--primary); font-style: italic; font-weight: 500; }
+
+/* "Alice is typing…" above the message box */
+.typing-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 20px;
+  margin: -4px 0 2px;
+  padding: 0 4px;
+  color: var(--muted);
+  font-size: 0.8rem;
+  animation: rise 0.2s ease-out;
+}
+.typing-indicator[hidden] { display: none; }
+.typing-text { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.typing-dots { display: inline-flex; gap: 3px; flex: none; }
+.typing-dots span {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--primary);
+  animation: typing-bounce 1.2s infinite ease-in-out;
+}
+.typing-dots span:nth-child(2) { animation-delay: 0.15s; }
+.typing-dots span:nth-child(3) { animation-delay: 0.3s; }
+@keyframes typing-bounce { 0%, 60%, 100% { opacity: 0.35; transform: translateY(0); } 30% { opacity: 1; transform: translateY(-3px); } }
 .chat-item.has-unread .chat-item-time { color: var(--primary); font-weight: 600; }
 .chat-unread {
   flex: none;
@@ -1774,7 +1835,7 @@ html.standalone :is(input, textarea, .msg-text, .room-banner-label) { -webkit-us
   .ctrl-label { display: none; }
 
   /* Floating things clear the rail */
-  .update-banner, body.app .update-banner { left: calc(var(--rail-w) + env(safe-area-inset-left) + 12px); bottom: 12px; }
+  .update-banner, body.app .update-banner, body.app .install-hint { left: calc(var(--rail-w) + env(safe-area-inset-left) + 12px); bottom: 12px; }
   .invite-stack, #toasts { left: calc(var(--rail-w) + env(safe-area-inset-left) + 12px); top: 52px; }
   .emoji-picker { max-height: min(260px, 70dvh); }
 }

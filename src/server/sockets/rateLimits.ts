@@ -9,6 +9,7 @@ import type { AppSocket } from './types';
 const EVENT_LIMITS: Partial<Record<keyof ClientToServerEvents, [number, number]>> = {
   'chat:message': [20, 10_000],
   'chat:sticker': [10, 10_000],
+  'chat:typing': [30, 10_000],
   'chat:join': [60, 60_000],
   'chat:preview': [60, 60_000],
   'chat:prefs': [60, 60_000],

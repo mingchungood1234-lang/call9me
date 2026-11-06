@@ -3,6 +3,7 @@ import { isValidPin, isValidUserId, PIN_RULES, USER_ID_RULES } from '../shared/v
 import { $, autoFocus } from './lib/dom';
 import { registerServiceWorker } from './lib/push';
 import { formatPairCode, renderQr } from './lib/qr';
+import { showInstallHint } from './lib/installHint';
 import { bindThemeToggle } from './lib/theme';
 import { UpdateWatcher } from './lib/updates';
 import { lockZoomInStandalone } from './lib/zoom';
@@ -291,6 +292,7 @@ function setupQrSignIn(): void {
 if (document.querySelector('#qr-btn')) setupQrSignIn();
 
 void registerServiceWorker();
+showInstallHint();
 
 // Website/PWA start page: pick up new deploys, but never wipe what the user is typing.
 new UpdateWatcher({

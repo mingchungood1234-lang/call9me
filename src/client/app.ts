@@ -15,6 +15,7 @@ import { ShareDialog } from './lib/ShareDialog';
 import { $, avatar, avatarUrlOf, el, formatDuration, hueFor, onAvatarsChange, paintAvatar, setAvatarUrls, toast } from './lib/dom';
 import { squareImage } from './lib/images';
 import { MobileTabs } from './lib/MobileTabs';
+import { showInstallHint } from './lib/installHint';
 import { isStandalone, PushNotifications, type PushStatus } from './lib/push';
 import { NOT_CONNECTED, withTimeout, type AppSocket } from './lib/socket';
 import { bindThemeToggle } from './lib/theme';
@@ -131,6 +132,9 @@ const updates = new UpdateWatcher({
   busyText: 'A new version of Call9me is ready. Update when you are done.',
 });
 socket.on('app:version', ({ version }) => updates.report(version));
+
+// In a browser tab: invite the user to add Call9me to their home screen (calls, notifications).
+showInstallHint({ delayMs: 6000 });
 let takenRetries = 0;
 let hasConnected = false;
 

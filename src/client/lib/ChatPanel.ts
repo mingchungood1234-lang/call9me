@@ -19,6 +19,20 @@ function listTime(timestamp: number): string {
     : date.toLocaleDateString([], { month: 'short', day: 'numeric' });
 }
 
+/** While typing, "still typing" is re-sent this often; others drop it after TYPING_EXPIRE_MS without one. */
+const TYPING_RESEND_MS = 3000;
+const TYPING_EXPIRE_MS = 6000;
+/** No key pressed for this long: we've stopped typing. */
+const TYPING_IDLE_MS = 4000;
+
+/** "Alice is typing…", "Alice and Bob are typing…", "Alice, Bob and 2 others are typing…" */
+function typingText(names: string[]): string {
+  if (names.length === 1) return `${names[0]} is typing…`;
+  if (names.length === 2) return `${names[0]} and ${names[1]} are typing…`;
+  if (names.length === 3) return `${names[0]}, ${names[1]} and ${names[2]} are typing…`;
+  return `${names[0]}, ${names[1]} and ${names.length - 2} others are typing…`;
+}
+
 /**
  * Chats: the list of rooms we've joined (the Public chat pinned first), each with its last
  * message and unread count, kept live; tapping one opens its conversation (← goes back).
@@ -61,6 +75,13 @@ export class ChatPanel {
   /** Whether the open conversation is actually on screen (then new messages count as read). */
   isOnScreen: () => boolean = () => document.visibilityState === 'visible';
   private roomMembers: string[] = [];
+  /** Who is typing where: room → (user → timer that drops them if no update comes). */
+  private readonly typers = new Map<string, Map<string, ReturnType<typeof setTimeout>>>();
+  private readonly typingEl = el('div', { className: 'typing-indicator' });
+  /** Our own typing: the room we told, when we last told it, and the idle timer. */
+  private typingRoom: string | null = null;
+  private typingSentAt = 0;
+  private typingIdle: ReturnType<typeof setTimeout> | undefined;
 
   constructor(
     private readonly socket: AppSocket,
@@ -105,6 +126,11 @@ export class ChatPanel {
     });
     document.body.append(this.actions);
     $('#chat-back-btn').addEventListener('click', () => this.back());
+    this.typingEl.setAttribute('aria-live', 'polite');
+    this.typingEl.hidden = true;
+    this.messageForm.before(this.typingEl);
+    this.messageInput.addEventListener('input', () => this.onOwnInput());
+    this.messageInput.addEventListener('blur', () => this.stopTyping());
     this.messageForm.addEventListener('submit', (e) => {
       e.preventDefault();
       this.send();
@@ -116,6 +142,15 @@ export class ChatPanel {
       this.renderList();
     });
     socket.on('chat:message', (message) => this.onMessage(message));
+    socket.on('chat:typing', ({ roomId, userId, typing }) => this.setTyper(roomId, userId, typing));
+    socket.on('disconnect', () => {
+      // Nobody's updates reach us while offline: start clean.
+      for (const users of this.typers.values()) for (const timer of users.values()) clearTimeout(timer);
+      this.typers.clear();
+      this.typingRoom = null;
+      this.renderTyping();
+      this.renderList();
+    });
     socket.on('chat:members', ({ roomId, members }) => {
       if (roomId === this.currentRoom) this.renderMembers(members);
     });
@@ -179,6 +214,7 @@ export class ChatPanel {
 
   private open(roomId: string, silent: boolean, key?: string): void {
     const id = roomId.toLowerCase();
+    if (this.typingRoom && this.typingRoom !== id) this.stopTyping();
     const previous = this.currentRoom;
     if (previous && previous !== id) this.socket.emit('chat:close', { roomId: previous });
 
@@ -198,6 +234,7 @@ export class ChatPanel {
       this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
       this.renderMembers(res.members);
       this.showRoom();
+      this.renderTyping();
       this.renderList();
       if (!silent) autoFocus(this.messageInput); // not on phones: it would pop the keyboard up
     }));
@@ -241,6 +278,7 @@ export class ChatPanel {
   }
 
   private showList(): void {
+    this.stopTyping();
     this.currentRoom = null;
     this.roomMembers = [];
     this.listView.hidden = false;
@@ -270,6 +308,7 @@ export class ChatPanel {
     this.inbox.set(message.roomId, entry);
     if (!message.system || !entry.lastMessage) entry.lastMessage = message;
     const fromOthers = !message.system && message.from !== this.userId;
+    if (fromOthers) this.setTyper(message.roomId, message.from, false, false); // they've sent it
 
     if (message.roomId === this.currentRoom) {
       this.appendMessage(message);
@@ -329,6 +368,9 @@ export class ChatPanel {
       preview = last.system ? body : `${last.from === this.userId ? 'You' : last.from}: ${body}`;
     }
 
+    const typing = [...(this.typers.get(room.id)?.keys() ?? [])];
+    if (typing.length) preview = typingText(typing);
+
     const flags: HTMLElement[] = [];
     if (room.pinned) flags.push(el('span', { className: 'chat-flag', text: '📌', title: 'Pinned' }));
     if (room.muted) flags.push(el('span', { className: 'chat-flag', text: '🔕', title: 'Muted' }));
@@ -351,7 +393,7 @@ export class ChatPanel {
           el('time', { className: 'chat-item-time', text: last ? listTime(last.timestamp) : '' }),
         ]),
         el('span', { className: 'chat-item-bottom' }, [
-          el('span', { className: 'chat-item-preview', text: preview }),
+          el('span', { className: typing.length ? 'chat-item-preview is-typing' : 'chat-item-preview', text: preview }),
           ...(room.unread ? [el('span', { className: 'chat-unread', text: room.unread > 99 ? '99+' : String(room.unread) })] : []),
         ]),
       ]),
@@ -445,6 +487,66 @@ export class ChatPanel {
       if (!this.messageInput.value) this.messageInput.value = text;
     }));
     this.messageInput.value = '';
+    // The message itself tells the others we're done typing.
+    clearTimeout(this.typingIdle);
+    this.typingRoom = null;
+  }
+
+  // ---- Typing indicator ----
+
+  /** Our input changed: tell the room we're typing (at most every few seconds), or that we stopped. */
+  private onOwnInput(): void {
+    const room = this.currentRoom;
+    if (!room || this.messageInput.disabled || !this.socket.connected) return;
+    if (!this.messageInput.value.trim()) {
+      this.stopTyping();
+      return;
+    }
+    const now = Date.now();
+    if (this.typingRoom !== room || now - this.typingSentAt > TYPING_RESEND_MS) {
+      this.socket.emit('chat:typing', { roomId: room, typing: true });
+      this.typingRoom = room;
+      this.typingSentAt = now;
+    }
+    clearTimeout(this.typingIdle);
+    this.typingIdle = setTimeout(() => this.stopTyping(), TYPING_IDLE_MS);
+  }
+
+  private stopTyping(): void {
+    clearTimeout(this.typingIdle);
+    if (!this.typingRoom) return;
+    if (this.socket.connected) this.socket.emit('chat:typing', { roomId: this.typingRoom, typing: false });
+    this.typingRoom = null;
+  }
+
+  /** Someone else started/stopped typing in `roomId`; a start expires unless refreshed. */
+  private setTyper(roomId: string, userId: string, typing: boolean, render = true): void {
+    if (userId === this.userId) return; // our other devices
+    let users = this.typers.get(roomId);
+    const had = users?.has(userId) ?? false;
+    if (users && had) clearTimeout(users.get(userId));
+    if (typing) {
+      if (!users) this.typers.set(roomId, (users = new Map()));
+      users.set(userId, setTimeout(() => this.setTyper(roomId, userId, false), TYPING_EXPIRE_MS));
+    } else {
+      if (!had) return;
+      users?.delete(userId);
+      if (users?.size === 0) this.typers.delete(roomId);
+    }
+    if (roomId === this.currentRoom) this.renderTyping();
+    if (render && (typing !== had)) this.renderList();
+  }
+
+  private renderTyping(): void {
+    const names = this.currentRoom ? [...(this.typers.get(this.currentRoom)?.keys() ?? [])] : [];
+    this.typingEl.hidden = names.length === 0;
+    if (!names.length) {
+      this.typingEl.replaceChildren();
+      return;
+    }
+    const dots = el('span', { className: 'typing-dots' }, [el('span'), el('span'), el('span')]);
+    dots.setAttribute('aria-hidden', 'true');
+    this.typingEl.replaceChildren(dots, el('span', { className: 'typing-text', text: typingText(names) }));
   }
 
   private renderMembers(members: string[]): void {

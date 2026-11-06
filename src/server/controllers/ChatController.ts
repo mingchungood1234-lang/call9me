@@ -8,6 +8,7 @@ import { roomModel } from '../models/RoomModel';
 import { roomSettingsModel, type RoomSettings } from '../models/RoomSettingsModel';
 import { stickerModel } from '../models/StickerModel';
 import { userChannel, userModel } from '../models/UserModel';
+import { userStatusModel } from '../models/UserStatusModel';
 import { pushService } from '../services/PushService';
 import { roomDirectory } from '../services/RoomDirectory';
 import type { AppServer, AppSocket } from '../sockets/types';
@@ -131,6 +132,16 @@ export class ChatController {
       ack({ ok: true });
       const tagged = this.notifyMentions(message.roomId, userId, text);
       this.pushToMembers(message.roomId, userId, text, tagged);
+    });
+
+    // "Alice is typing…" for the others in the room. Invisible users never show up typing
+    // ("stopped" still goes through; one already shown expires on its own within seconds).
+    socket.on('chat:typing', (payload) => {
+      if (!isValidRoomId(payload?.roomId) || this.cannotPost(payload.roomId, userId)) return;
+      const typing = payload.typing === true;
+      if (typing && userStatusModel.get(userId) === 'invisible') return;
+      const roomId = roomModel.normalize(payload.roomId);
+      socket.to(channel(roomId)).emit('chat:typing', { roomId, userId, typing });
     });
 
     // A sticker from our own collection, posted big in the room.
