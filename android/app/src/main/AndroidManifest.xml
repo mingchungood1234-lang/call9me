@@ -9,6 +9,7 @@
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:label="@string/appName"
+        android:manageSpaceActivity="com.google.androidbrowserhelper.trusted.ManageDataLauncherActivity"
         android:supportsRtl="true"
         android:theme="@style/Theme.Call9me">
 
@@ -71,6 +72,18 @@
                     android:scheme="https"
                     android:host="${hostName}" />
             </intent-filter>
+        </activity>
+
+        <!-- Required: on every launch the library enables this activity and adds a "Site settings"
+             shortcut for it. If it isn't declared here, Android throws "Unknown component" and the
+             app crashes at start ("Call9me keeps stopping"). It also backs "Manage space"/"Clear
+             data" in the app's system settings. -->
+        <activity
+            android:name="com.google.androidbrowserhelper.trusted.ManageDataLauncherActivity"
+            android:exported="false">
+            <meta-data
+                android:name="android.support.customtabs.trusted.MANAGE_SPACE_URL"
+                android:value="${launchUrl}" />
         </activity>
 
         <activity
