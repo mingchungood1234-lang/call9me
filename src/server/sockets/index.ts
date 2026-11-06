@@ -24,7 +24,7 @@ import { safeAck } from './util';
 export function registerSocketHandlers(io: AppServer): void {
   const signaling = new SignalingController(io);
   const chat = new ChatController(io);
-  const friends = new FriendController(io);
+  const friends = new FriendController(io, chat);
   const rooms = new RoomController(io);
   const emoji = new EmojiController(io);
   const stickers = new StickerController(io);

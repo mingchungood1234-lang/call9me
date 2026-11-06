@@ -1,5 +1,5 @@
 import type { RoomVisibility } from '../../shared/types';
-import { isValidRoomId, PUBLIC_ROOM_ID, ROOM_ID_RULES } from '../../shared/validation';
+import { DM_ROOM_PREFIX, isDmRoomId, isValidRoomId, PUBLIC_ROOM_ID, ROOM_ID_RULES } from '../../shared/validation';
 import { friendModel } from '../models/FriendModel';
 import { roomSettingsModel } from '../models/RoomSettingsModel';
 import { userModel } from '../models/UserModel';
@@ -28,6 +28,7 @@ export class RoomController {
       if (payload.roomId.toLowerCase() === PUBLIC_ROOM_ID) {
         return ack({ ok: false, error: `"${PUBLIC_ROOM_ID}" is reserved for the Public chat. Pick another ID.` });
       }
+      if (isDmRoomId(payload.roomId)) return ack({ ok: false, error: `IDs starting with "${DM_ROOM_PREFIX}" are reserved. Pick another ID.` });
 
       const existing = roomSettingsModel.get(payload.roomId);
       if (existing && existing.owner.toLowerCase() !== userId.toLowerCase()) {

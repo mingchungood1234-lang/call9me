@@ -12,7 +12,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.client.json && tsc -p tsconfig.sw.json",
     "icons": "node scripts/generate-icons.js",
     "start": "node dist/server/server.js",
-    "dev": "concurrently -k -n server,client,sw -c blue,magenta,green \"tsx watch src/server/server.ts\" \"npm run build:client -- --watch=forever\" \"npm run build:sw -- --watch=forever\""
+    "dev": "concurrently -k -n server,client,sw -c blue,magenta,green \"tsx watch src/server/server.ts\" \"npm run build:client -- --watch=forever\" \"npm run build:sw -- --watch=forever\"",
+    "db:migrate": "tsx scripts/migrate-to-postgres.ts"
   },
   "engines": {
     "node": ">=18"
@@ -21,6 +22,7 @@
     "ejs": "^3.1.10",
     "express": "^5.3.0",
     "nodemailer": "^10.3.1",
+    "pg": "^8.23.1",
     "socket.io": "^4.8.4",
     "web-push": "^3.6.7"
   },
@@ -28,6 +30,7 @@
     "@types/express": "^5.0.6",
     "@types/node": "^26.6.6",
     "@types/nodemailer": "^8.0.2",
+    "@types/pg": "^8.23.1",
     "@types/web-push": "^3.6.4",
     "concurrently": "^10.0.6",
     "esbuild": "^0.28.2",

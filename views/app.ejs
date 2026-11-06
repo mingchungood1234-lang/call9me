@@ -126,6 +126,10 @@
                  placeholder="User ID to add" aria-label="User ID to add as a friend">
           <button class="btn btn-primary" type="submit">Add</button>
         </form>
+        <label class="switch-row" for="block-requests">
+          <span><strong>Auto-block friend requests</strong><small>Nobody can send you new requests while this is on</small></span>
+          <input id="block-requests" type="checkbox" role="switch" class="switch">
+        </label>
         <ul id="friends-list" class="users-list people-list"></ul>
       </div>
 

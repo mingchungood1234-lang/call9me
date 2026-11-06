@@ -64,3 +64,15 @@ export const MAX_EMAIL_LENGTH = 254;
 export function isValidEmail(value: unknown): value is string {
   return typeof value === 'string' && value.length <= MAX_EMAIL_LENGTH && /^[^\s@<>()",;:]+@[^\s@<>()",;:]+\.[^\s@<>()",;:]{2,}$/.test(value);
 }
+
+/**
+ * Direct messages between two friends live in a room with a reserved ID: "dm--" + a hash of
+ * the pair. Nobody can create a room with this prefix, and only those two can open it.
+ */
+export const DM_ROOM_PREFIX = 'dm--';
+export function isDmRoomId(value: unknown): value is string {
+  return typeof value === 'string' && value.toLowerCase().startsWith(DM_ROOM_PREFIX) && ROOM_ID_PATTERN.test(value);
+}
+
+/** The note that must come with a friend request. */
+export const MAX_REQUEST_MESSAGE_LENGTH = 300;

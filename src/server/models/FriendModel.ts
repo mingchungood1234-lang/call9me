@@ -1,13 +1,17 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import type { FriendsState } from '../../shared/types';
+import type { FriendRequest, FriendsState } from '../../shared/types';
 import { config } from '../config';
+
+/** [from, to, message, sent at] (requests from before messages were required have none). */
+type StoredRequest = [string, string, string?, number?];
 
 interface StoredFriends {
   /** Pairs of IDs (as registered), each listed once. */
   friends: [string, string][];
-  /** [from, to] */
-  requests: [string, string][];
+  requests: StoredRequest[];
+  /** Lowercased IDs that turned on "auto-block incoming friend requests". */
+  blockRequests?: string[];
 }
 
 const key = (id: string) => id.toLowerCase();
@@ -20,8 +24,9 @@ const pairKey = (a: string, b: string) => [key(a), key(b)].sort().join('|');
 export class FriendModel {
   /** pairKey → [a, b] */
   private readonly friends = new Map<string, [string, string]>();
-  /** "from|to" (lowercased) → [from, to] */
-  private readonly requests = new Map<string, [string, string]>();
+  /** "from|to" (lowercased) → [from, to, message, at] */
+  private readonly requests = new Map<string, StoredRequest>();
+  private readonly blocking = new Set<string>();
   private persistTimer: NodeJS.Timeout | null = null;
 
   constructor(private readonly file: string) {
@@ -48,17 +53,32 @@ export class FriendModel {
 
   state(userId: string): FriendsState {
     const me = key(userId);
-    const incoming: string[] = [];
-    const outgoing: string[] = [];
-    for (const [from, to] of this.requests.values()) {
-      if (key(to) === me) incoming.push(from);
-      else if (key(from) === me) outgoing.push(to);
+    const incoming: FriendRequest[] = [];
+    const outgoing: FriendRequest[] = [];
+    for (const [from, to, message = '', at = 0] of this.requests.values()) {
+      if (key(to) === me) incoming.push({ id: from, message, at });
+      else if (key(from) === me) outgoing.push({ id: to, message, at });
     }
-    return { friends: this.friendsOf(userId), incoming, outgoing };
+    return { friends: this.friendsOf(userId), incoming, outgoing, blockRequests: this.blocksRequests(userId) };
   }
 
-  addRequest(from: string, to: string): void {
-    this.requests.set(`${key(from)}|${key(to)}`, [from, to]);
+  /** The note sent with a pending request ('' if none). */
+  requestMessage(from: string, to: string): string {
+    return this.requests.get(`${key(from)}|${key(to)}`)?.[2] ?? '';
+  }
+
+  addRequest(from: string, to: string, message: string): void {
+    this.requests.set(`${key(from)}|${key(to)}`, [from, to, message, Date.now()]);
+    this.schedulePersist();
+  }
+
+  blocksRequests(userId: string): boolean {
+    return this.blocking.has(key(userId));
+  }
+
+  setBlockRequests(userId: string, block: boolean): void {
+    if (block) this.blocking.add(key(userId));
+    else this.blocking.delete(key(userId));
     this.schedulePersist();
   }
 
@@ -87,7 +107,8 @@ export class FriendModel {
     try {
       const data: StoredFriends = JSON.parse(fs.readFileSync(this.file, 'utf8'));
       for (const [a, b] of data.friends ?? []) this.friends.set(pairKey(a, b), [a, b]);
-      for (const [from, to] of data.requests ?? []) this.requests.set(`${key(from)}|${key(to)}`, [from, to]);
+      for (const request of data.requests ?? []) this.requests.set(`${key(request[0])}|${key(request[1])}`, request);
+      for (const id of data.blockRequests ?? []) this.blocking.add(id);
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== 'ENOENT') console.warn(`[friends] could not read ${this.file}:`, err);
     }
@@ -97,7 +118,11 @@ export class FriendModel {
     if (this.persistTimer) return;
     this.persistTimer = setTimeout(() => {
       this.persistTimer = null;
-      const data: StoredFriends = { friends: [...this.friends.values()], requests: [...this.requests.values()] };
+      const data: StoredFriends = {
+        friends: [...this.friends.values()],
+        requests: [...this.requests.values()],
+        blockRequests: [...this.blocking],
+      };
       try {
         fs.mkdirSync(path.dirname(this.file), { recursive: true });
         const tmp = `${this.file}.tmp`;

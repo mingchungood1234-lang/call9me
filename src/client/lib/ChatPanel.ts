@@ -1,5 +1,5 @@
 import type { ChatMessage, ChatRoomPreview, RoomPrefs } from '../../shared/types';
-import { isValidRoomId, MAX_MESSAGE_LENGTH, PUBLIC_ROOM_ID, ROOM_ID_RULES } from '../../shared/validation';
+import { isDmRoomId, isValidRoomId, MAX_MESSAGE_LENGTH, PUBLIC_ROOM_ID, ROOM_ID_RULES } from '../../shared/validation';
 import { $, autoFocus, avatar, el, formatTime, hueFor, toast } from './dom';
 import { renderRichText, type CustomEmojiStore } from './emoji';
 import { EmojiPicker } from './EmojiPicker';
@@ -168,6 +168,15 @@ export class ChatPanel {
       this.renderList();
       toast(banned ? `${by} banned you from #${roomId}.` : `${by} removed you from #${roomId}.`, 'error', 6000);
     });
+    socket.on('chat:closed', ({ roomId }) => {
+      const peer = this.inbox.get(roomId)?.dmWith;
+      this.inbox.delete(roomId);
+      if (roomId === this.currentRoom) {
+        this.showList();
+        toast(peer ? `You and ${peer} are no longer friends, so this chat was closed.` : 'This chat was closed.');
+      }
+      this.renderList();
+    });
     socket.on('chat:deleted', ({ roomId, by }) => {
       this.inbox.delete(roomId);
       if (roomId === this.currentRoom) this.showList();
@@ -177,6 +186,30 @@ export class ChatPanel {
 
     this.renderList();
     this.showList();
+  }
+
+  /** How a chat is named: "@friend" for a direct message, else the room's name. */
+  private title(roomId: string): string {
+    const peer = this.inbox.get(roomId)?.dmWith;
+    return peer ? `💬 ${peer}` : roomTitle(roomId);
+  }
+
+  /** Opens (or starts) the direct-message chat with a friend. */
+  openDm(friendId: string): void {
+    if (!this.socket.connected) {
+      toast(NOT_CONNECTED, 'error');
+      return;
+    }
+    this.socket.emit('dm:open', { with: friendId }, withTimeout((res) => {
+      if (!res.ok) {
+        toast(res.error, 'error');
+        return;
+      }
+      const entry = this.inbox.get(res.roomId) ?? { id: res.roomId, unread: 0 };
+      entry.dmWith = res.with;
+      this.inbox.set(res.roomId, entry);
+      this.open(res.roomId, false);
+    }));
   }
 
   /** The open conversation's room, if any. */
@@ -229,6 +262,7 @@ export class ChatPanel {
       this.roomInput.value = '';
       const entry = this.inbox.get(res.roomId) ?? { id: res.roomId, unread: 0 };
       entry.unread = 0;
+      if (res.dmWith) entry.dmWith = res.dmWith;
       entry.lastMessage = [...res.history].reverse().find((m) => !m.system) ?? entry.lastMessage;
       this.inbox.set(res.roomId, entry);
       this.messagesEl.replaceChildren();
@@ -263,9 +297,10 @@ export class ChatPanel {
       toast(NOT_CONNECTED, 'error');
       return;
     }
+    const peer = this.inbox.get(roomId)?.dmWith;
     this.socket.emit('rooms:leave', { roomId }, withTimeout((res) => {
       if (!res.ok) toast(res.error, 'error');
-      else toast(`You left #${roomId}.`);
+      else toast(peer ? `Closed your chat with ${peer}. It comes back when one of you writes.` : `You left #${roomId}.`);
     }));
     this.inbox.delete(roomId);
     if (roomId === this.currentRoom) this.showList();
@@ -296,11 +331,12 @@ export class ChatPanel {
     const canPost = !isPublic || this.isAdmin;
     this.listView.hidden = true;
     this.roomView.hidden = false;
-    this.roomTitle.textContent = `${roomTitle(room)}${this.inbox.get(room)?.muted ? ' 🔕' : ''}`;
+    this.roomTitle.textContent = `${this.title(room)}${this.inbox.get(room)?.muted ? ' 🔕' : ''}`;
     this.messageForm.hidden = !canPost;
     this.readonlyNote.hidden = canPost;
     this.messageInput.disabled = this.sendBtn.disabled = !canPost;
-    this.messageInput.placeholder = isPublic ? 'Post an announcement to everyone' : `Message #${room}`;
+    const peer = this.inbox.get(room)?.dmWith;
+    this.messageInput.placeholder = isPublic ? 'Post an announcement to everyone' : peer ? `Message ${peer}` : `Message #${room}`;
   }
 
   private onMessage(message: ChatMessage): void {
@@ -358,8 +394,12 @@ export class ChatPanel {
 
   private renderListItem(room: ChatRoomPreview): HTMLLIElement {
     const isPublic = room.id === PUBLIC_ROOM_ID;
-    const icon = isPublic ? el('span', { className: 'avatar room-avatar chat-public-icon', text: '📢' }) : el('span', { className: 'avatar room-avatar', text: '#' });
-    if (!isPublic) icon.style.setProperty('--h', String(hueFor(room.id)));
+    const icon = room.dmWith
+      ? avatar(room.dmWith)
+      : isPublic
+        ? el('span', { className: 'avatar room-avatar chat-public-icon', text: '📢' })
+        : el('span', { className: 'avatar room-avatar', text: '#' });
+    if (!isPublic && !room.dmWith) icon.style.setProperty('--h', String(hueFor(room.id)));
 
     const last = room.lastMessage;
     let preview = isPublic ? 'Announcements for everyone' : 'No messages yet';
@@ -380,7 +420,7 @@ export class ChatPanel {
       icon,
       el('span', { className: 'chat-item-main' }, [
         el('span', { className: 'chat-item-top' }, [
-          el('span', { className: 'user-name', text: roomTitle(room.id) }),
+          el('span', { className: 'user-name', text: room.dmWith ?? roomTitle(room.id) }),
           ...flags,
           el('time', { className: 'chat-item-time', text: last ? listTime(last.timestamp) : '' }),
         ]),
@@ -392,7 +432,7 @@ export class ChatPanel {
     ]);
     item.tabIndex = 0;
     item.setAttribute('role', 'button');
-    item.setAttribute('aria-label', `${roomTitle(room.id)}${room.unread ? `, ${room.unread} unread` : ''}`);
+    item.setAttribute('aria-label', `${room.dmWith ? `Chat with ${room.dmWith}` : roomTitle(room.id)}${room.unread ? `, ${room.unread} unread` : ''}`);
     item.addEventListener('click', () => this.join(room.id));
     item.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' || e.key === ' ') {
@@ -409,7 +449,8 @@ export class ChatPanel {
     const room = this.inbox.get(roomId);
     if (!room) return;
     const isPublic = roomId === PUBLIC_ROOM_ID;
-    this.actionsTitle.textContent = `${roomTitle(roomId)} · Settings`;
+    const isDm = !!room.dmWith || isDmRoomId(roomId);
+    this.actionsTitle.textContent = `${this.title(roomId)} · Settings`;
     const close = () => this.actions.close();
     const option = (text: string, onClick: () => void, variant = 'btn-secondary') => {
       const button = el('button', { className: `btn ${variant}`, text });
@@ -423,7 +464,7 @@ export class ChatPanel {
     const section = (heading: string, items: HTMLElement[]) =>
       items.length ? [el('div', { className: 'settings-section' }, [el('p', { className: 'settings-heading', text: heading }), ...items])] : [];
 
-    const roomItems = isPublic ? [] : this.roomSettings(roomId, close);
+    const roomItems = isPublic || isDm ? [] : this.roomSettings(roomId, close);
     const chatPrefs: HTMLElement[] = [];
     if (!isPublic) chatPrefs.push(option(room.pinned ? '📌 Unpin' : '📌 Pin to top', () => this.setPrefs(roomId, { pinned: !room.pinned })));
     chatPrefs.push(
@@ -434,7 +475,7 @@ export class ChatPanel {
     this.actionsList.replaceChildren(
       ...section('Room', roomItems),
       ...section('Your chat', chatPrefs),
-      ...(isPublic ? [] : [option('🚪 Leave room', () => this.leave(roomId), 'btn-ghost btn-delete')]),
+      ...(isPublic ? [] : [option(isDm ? '✖️ Close chat' : '🚪 Leave room', () => this.leave(roomId), 'btn-ghost btn-delete')]),
     );
     this.actions.showModal();
   }
@@ -455,7 +496,7 @@ export class ChatPanel {
         const what = changes.pinned !== undefined ? (changes.pinned ? 'Pinned' : 'Unpinned')
           : changes.muted !== undefined ? (changes.muted ? 'Muted' : 'Unmuted')
           : changes.archived ? 'Archived' : 'Unarchived';
-        toast(`${what} ${roomTitle(roomId)}.`, 'success');
+        toast(`${what} ${this.title(roomId)}.`, 'success');
         return;
       }
       toast(res.error, 'error');

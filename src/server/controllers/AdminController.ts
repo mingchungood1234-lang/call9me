@@ -400,8 +400,9 @@ export class AdminController {
       touched.add(friend);
     }
     const { incoming, outgoing } = friendModel.state(id);
-    for (const from of incoming) friendModel.removeRequest(from, id) && touched.add(from);
-    for (const to of outgoing) friendModel.removeRequest(id, to) && touched.add(to);
+    for (const { id: from } of incoming) friendModel.removeRequest(from, id) && touched.add(from);
+    for (const { id: to } of outgoing) friendModel.removeRequest(id, to) && touched.add(to);
+    friendModel.setBlockRequests(id, false);
     for (const other of touched) io?.to(userChannel(other)).emit('friends:update', friendModel.state(other));
 
     const deletedRooms: string[] = [];

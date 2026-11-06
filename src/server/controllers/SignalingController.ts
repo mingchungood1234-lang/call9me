@@ -1,5 +1,5 @@
 import type { Ack, CallElsewhere, CallRejoin, IceCandidate, PushPayload, SessionDescription } from '../../shared/types';
-import { isValidRoomId, PUBLIC_ROOM_ID, ROOM_ID_RULES } from '../../shared/validation';
+import { isDmRoomId, isValidRoomId, PUBLIC_ROOM_ID, ROOM_ID_RULES } from '../../shared/validation';
 import { config } from '../config';
 import { accountModel } from '../models/AccountModel';
 import { avatarModel } from '../models/AvatarModel';
@@ -292,7 +292,8 @@ export class SignalingController {
     }
     const denied = roomDirectory.denyReason(payload.roomId, user.id, payload.key);
     if (denied) return ack({ ok: false, error: denied });
-    roomSettingsModel.claim(payload.roomId, user.id); // first to use a new ID owns it
+    // First to use a new ID owns it. DM rooms (two friends) are never owned or listed.
+    if (!isDmRoomId(payload.roomId)) roomSettingsModel.claim(payload.roomId, user.id);
 
     const video = payload.video !== false;
     let call = callModel.findByRoom(payload.roomId);

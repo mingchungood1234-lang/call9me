@@ -1,6 +1,6 @@
 import { io } from 'socket.io-client';
 import { CONNECT_ERRORS, type OnlineUserSummary, type PushTestResult, type UserStatus } from '../shared/types';
-import { isValidRoomId, isValidUserId, MAX_AVATAR_BYTES, ROOM_ID_RULES } from '../shared/validation';
+import { isDmRoomId, isValidRoomId, isValidUserId, MAX_AVATAR_BYTES, ROOM_ID_RULES } from '../shared/validation';
 import { CallManager, canShareScreen, IDLE_CALL, type CallInfo } from './lib/CallManager';
 import { CallHistoryPanel } from './lib/CallHistoryPanel';
 import { ChatPanel } from './lib/ChatPanel';
@@ -1240,6 +1240,10 @@ friends = new FriendsPanel(socket, userId, {
     targetInput.value = id;
     startCall();
   },
+  onMessage: (id) => {
+    chat.openDm(id);
+    tabs.show('chat');
+  },
   onChange: (state) => {
     friendsCount.hidden = state.incoming.length === 0;
     friendsCount.textContent = String(state.incoming.length);
@@ -1351,6 +1355,7 @@ document.addEventListener('visibilitychange', () => chat.markRead());
 chat.mentionCandidates = () => [...(friends?.current.friends ?? []), ...lastUsers.map((u) => u.id)];
 // Joining is permanent (it stays in the list, with notifications, until we leave), so show the room and ask first.
 chat.beforeJoin = async (roomId, key) => {
+  if (isDmRoomId(roomId)) return true; // a chat with a friend (the server checks you're friends)
   if (rooms.find(roomId)?.owner.toLowerCase() === userId.toLowerCase()) return true;
   return joinDialog.open(roomId, key);
 };

@@ -1,6 +1,7 @@
 import type { RoomSummary } from '../../shared/types';
-import { PUBLIC_ROOM_ID } from '../../shared/validation';
+import { isDmRoomId, PUBLIC_ROOM_ID } from '../../shared/validation';
 import { callModel } from '../models/CallModel';
+import { directMessageModel } from '../models/DirectMessageModel';
 import { friendModel } from '../models/FriendModel';
 import { roomModel } from '../models/RoomModel';
 import { roomSettingsModel, type RoomSettings } from '../models/RoomSettingsModel';
@@ -24,7 +25,9 @@ export class RoomDirectory {
   init(io: AppServer): void {
     this.io = io;
     // Every room (and the Public chat) keeps its chat history on disk until it's deleted.
-    roomModel.isPermanent = (roomId) => roomId === PUBLIC_ROOM_ID || roomSettingsModel.get(roomId) !== undefined;
+    // Direct messages between friends keep their history too (saved like any room's).
+    roomModel.isPermanent = (roomId) =>
+      roomId === PUBLIC_ROOM_ID || roomSettingsModel.get(roomId) !== undefined || directMessageModel.pairOf(roomId) !== undefined;
   }
 
   /**
@@ -46,6 +49,8 @@ export class RoomDirectory {
    * makes them a member (a preview only checks).
    */
   denyReason(roomId: string, userId: string, key?: unknown, admit = true): string | null {
+    // Direct messages: only the two friends, never anyone else (not even with a "key").
+    if (isDmRoomId(roomId)) return directMessageModel.canUse(roomId, userId) ? null : 'You can only message your friends.';
     const settings = roomSettingsModel.get(roomId);
     if (!settings || this.canSee(settings, userId)) return null;
     if (roomSettingsModel.isBanned(settings, userId)) return `${settings.owner} removed you from #${settings.id}.`;

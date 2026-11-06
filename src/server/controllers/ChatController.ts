@@ -1,5 +1,7 @@
 import type { ChatRoomPreview } from '../../shared/types';
-import { isValidRoomId, MAX_MESSAGE_LENGTH, mentionsIn, PUBLIC_ROOM_ID, ROOM_ID_RULES } from '../../shared/validation';
+import { isDmRoomId, isValidRoomId, MAX_MESSAGE_LENGTH, mentionsIn, PUBLIC_ROOM_ID, ROOM_ID_RULES } from '../../shared/validation';
+import { directMessageModel } from '../models/DirectMessageModel';
+import { friendModel } from '../models/FriendModel';
 import { isAdmin } from '../config';
 import { accountModel } from '../models/AccountModel';
 import { callModel } from '../models/CallModel';
@@ -43,25 +45,29 @@ export class ChatController {
 
       const roomId = roomModel.normalize(payload.roomId);
       const isPublic = roomId === PUBLIC_ROOM_ID;
+      const isDm = isDmRoomId(roomId);
       if (!isPublic) {
         const denied = roomDirectory.denyReason(roomId, userId, payload.key);
         if (denied) return ack({ ok: false, error: denied });
-        roomSettingsModel.claim(roomId, userId); // first to use a new ID owns it (public by default)
+        if (!isDm) roomSettingsModel.claim(roomId, userId); // first to use a new ID owns it (public by default)
       }
 
       // Everyone is always in the Public chat; other rooms are joined once, then stay in the list.
-      const newlyJoined = !isPublic && !roomModel.isFollower(roomId, userId);
+      const newlyJoined = !isPublic && !isDm && !roomModel.isFollower(roomId, userId);
+      const reopened = isDm && !roomModel.isFollower(roomId, userId);
       roomModel.join(roomId, userId);
       if (!isPublic) {
         roomModel.follow(roomId, userId);
         // Joined for good: they keep access even if the room is made private or link-only later.
-        roomSettingsModel.addMember(roomSettingsModel.claim(roomId, userId), userId);
+        if (!isDm) roomSettingsModel.addMember(roomSettingsModel.claim(roomId, userId), userId);
       }
       roomModel.markRead(userId, roomId);
       // All our devices get the room's live messages, not just this one.
       this.io.in(userChannel(userId)).socketsJoin(channel(roomId));
 
-      ack({ ok: true, roomId, history: roomModel.history(roomId), members: roomModel.members(roomId) });
+      const dmWith = isDm ? directMessageModel.peerOf(roomId, userId) : undefined;
+      ack({ ok: true, roomId, history: roomModel.history(roomId), members: roomModel.members(roomId), dmWith });
+      if (reopened) this.syncList(socket, userId);
       if (newlyJoined) {
         const notice = roomModel.addMessage(roomId, userId, `${userId} joined`, true);
         socket.to(channel(roomId)).emit('chat:message', notice);
@@ -69,6 +75,14 @@ export class ChatController {
       }
       this.emitMembers(roomId);
       roomDirectory.changed();
+    });
+
+    // The DM conversation with a friend: its room ID (the app then opens it with chat:join).
+    socket.on('dm:open', (payload, rawAck) => {
+      const ack = safeAck(rawAck);
+      const other = typeof payload?.with === 'string' ? accountModel.canonicalId(payload.with) : undefined;
+      if (!other || !friendModel.areFriends(userId, other)) return ack({ ok: false, error: 'You can only message your friends.' });
+      ack({ ok: true, roomId: directMessageModel.roomFor(userId, other), with: other });
     });
 
     // What a room looks like before joining: its listing and latest messages. Grants nothing.
@@ -126,6 +140,7 @@ export class ChatController {
       if (text.length > MAX_MESSAGE_LENGTH) {
         return ack({ ok: false, error: `Message is longer than ${MAX_MESSAGE_LENGTH} characters` });
       }
+      this.reviveDm(payload.roomId, userId);
       const message = roomModel.addMessage(payload.roomId, userId, text);
       roomModel.markRead(userId, message.roomId);
       this.io.to(channel(message.roomId)).emit('chat:message', message);
@@ -151,6 +166,7 @@ export class ChatController {
       if (denied) return ack({ ok: false, error: denied });
       const url = typeof payload.stickerId === 'string' ? stickerModel.urlOf(userId, payload.stickerId) : undefined;
       if (!url) return ack({ ok: false, error: 'That sticker no longer exists' });
+      this.reviveDm(payload.roomId, userId);
       const message = roomModel.addMessage(payload.roomId, userId, '', false, url);
       roomModel.markRead(userId, message.roomId);
       this.io.to(channel(message.roomId)).emit('chat:message', message);
@@ -271,6 +287,49 @@ export class ChatController {
     }
   }
 
+  /**
+   * Two people just became friends: their DM chat appears in both lists, opening with the
+   * notes from the friend request(s), so the conversation can go on.
+   */
+  startDm(a: string, b: string, openings: { from: string; text: string }[] = []): void {
+    const roomId = directMessageModel.roomFor(a, b);
+    for (const id of [a, b]) {
+      roomModel.follow(roomId, id);
+      this.io.in(userChannel(id)).socketsJoin(channel(roomId));
+    }
+    for (const opening of openings.filter((o) => o.text)) {
+      const message = roomModel.addMessage(roomId, opening.from, opening.text);
+      roomModel.markRead(opening.from, roomId);
+      this.io.to(channel(roomId)).emit('chat:message', message);
+    }
+    const notice = roomModel.addMessage(roomId, b, `You are now friends. Say hi!`, true);
+    this.io.to(channel(roomId)).emit('chat:message', notice);
+    for (const id of [a, b]) this.io.to(userChannel(id)).emit('chat:rooms', this.chatList(id));
+  }
+
+  /** A DM the friend closed comes back to their list when we write (so they still get it). */
+  private reviveDm(roomId: string, from: string): void {
+    const peer = directMessageModel.peerOf(roomId, from);
+    if (!peer || roomModel.isFollower(roomId, peer)) return;
+    roomModel.follow(roomId, peer);
+    this.io.in(userChannel(peer)).socketsJoin(channel(roomId));
+    this.io.to(userChannel(peer)).emit('chat:rooms', this.chatList(peer));
+  }
+
+  /** The friendship ended: the DM leaves both lists (its history is kept if they make up). */
+  closeDm(a: string, b: string): void {
+    const roomId = directMessageModel.roomFor(a, b);
+    for (const id of [a, b]) {
+      const follower = roomModel.followersOf(roomId).find((f) => same(f, id));
+      if (follower) roomModel.unfollow(roomId, follower);
+      const viewer = roomModel.members(roomId).find((m) => same(m, id));
+      if (viewer) roomModel.leave(roomId, viewer);
+      this.io.in(userChannel(id)).socketsLeave(channel(roomId));
+      this.io.to(userChannel(id)).emit('chat:closed', { roomId });
+    }
+    roomModel.release(roomId);
+  }
+
   /** Closing the app just stops viewing; the rooms stay in the user's list. */
   handleDisconnect(userId: string): void {
     for (const roomId of roomModel.roomsOf(userId)) this.stopViewing(roomId, userId);
@@ -286,6 +345,7 @@ export class ChatController {
         lastMessage: [...messages].reverse().find((m) => !m.system) ?? messages.at(-1),
         unread: roomModel.unreadCount(id, userId),
         visibility: roomSettingsModel.get(id)?.visibility,
+        dmWith: directMessageModel.peerOf(id, userId),
         ...roomModel.prefsOf(userId, id),
       };
     };
@@ -319,6 +379,7 @@ export class ChatController {
     // Joined, or viewing it now: another of our devices may have closed the room meanwhile.
     const inRoom = isValidRoomId(roomId) && (roomModel.isMember(roomId, userId) || roomModel.isFollower(roomId, userId));
     if (!inRoom) return 'Open the room before sending messages';
+    if (isDmRoomId(roomId) && !directMessageModel.canUse(roomId, userId)) return 'You can only message your friends.';
     if (roomModel.normalize(roomId) === PUBLIC_ROOM_ID && !isAdmin(userId)) return 'Only admins can post in the Public chat';
     return null;
   }
@@ -333,7 +394,8 @@ export class ChatController {
   private leaveRoom(socket: AppSocket, roomId: string, userId: string, dropMembership = true): void {
     const wasIn = roomModel.isFollower(roomId, userId) || roomModel.isMember(roomId, userId);
     roomModel.leave(roomId, userId);
-    if (wasIn) {
+    // Closing a DM only takes it off our list (it comes back when either of us writes or opens it).
+    if (wasIn && !isDmRoomId(roomId)) {
       const notice = roomModel.addMessage(roomId, userId, `${userId} left`, true);
       this.io.to(channel(roomId)).emit('chat:message', notice);
     }
@@ -398,12 +460,13 @@ export class ChatController {
       }
       return;
     }
+    const isDm = isDmRoomId(roomId);
     const recipients = new Set([...roomModel.members(roomId), ...roomModel.followersOf(roomId)]);
     for (const member of recipients) {
       if (member === from || skip.has(member.toLowerCase()) || roomModel.isMuted(member, roomId)) continue;
       pushService.notify(
         member,
-        { type: 'chat', title: `#${roomId} · ${from}`, body, tag: `chat-${roomId}`, url: `/app?room=${roomId}` },
+        { type: 'chat', title: isDm ? `💬 ${from}` : `#${roomId} · ${from}`, body, tag: `chat-${roomId}`, url: `/app?room=${roomId}` },
         { throttleMs: CHAT_PUSH_THROTTLE_MS },
       );
     }

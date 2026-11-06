@@ -67,6 +67,8 @@ export interface ChatRoomPreview extends RoomPrefs {
   /** Messages from others since we last read the room. */
   unread: number;
   visibility?: RoomVisibility;
+  /** A direct-message conversation: the friend it's with. */
+  dmWith?: string;
 }
 
 /** One of our own stickers (a picture we added; sending it posts it big in chat). */
@@ -102,13 +104,22 @@ export interface RoomSummary {
   joined?: boolean;
 }
 
+/** A pending friend request: who (the other person) and the note that came with it. */
+export interface FriendRequest {
+  id: string;
+  message: string;
+  at: number;
+}
+
 /** Our friends and pending requests (IDs as registered). */
 export interface FriendsState {
   friends: string[];
   /** Requests waiting for us to accept or decline. */
-  incoming: string[];
+  incoming: FriendRequest[];
   /** Requests we sent that are still pending. */
-  outgoing: string[];
+  outgoing: FriendRequest[];
+  /** We turned on "auto-block incoming friend requests": nobody can send us new ones. */
+  blockRequests: boolean;
 }
 
 /** A picture emoji anyone can use in chat by typing `:name:`. */
@@ -217,9 +228,11 @@ export interface ClientToServerEvents {
 
   'chat:join': (
     payload: { roomId: string; key?: string },
-    ack: Ack<{ roomId: string; history: ChatMessage[]; members: string[] }>,
+    ack: Ack<{ roomId: string; history: ChatMessage[]; members: string[]; dmWith?: string }>,
   ) => void;
   'chat:leave': (payload: { roomId: string }) => void;
+  /** The direct-message conversation with a friend (its room ID, to open with chat:join). */
+  'dm:open': (payload: { with: string }, ack: Ack<{ roomId: string; with: string }>) => void;
   /**
    * A room as it looks before joining: its listing and latest messages (`room` is null if
    * the ID is free, so joining creates it). `key`: the invite key from a link.
@@ -260,7 +273,10 @@ export interface ClientToServerEvents {
     ack: Ack<{ sent: string[] }>,
   ) => void;
 
-  'friends:request': (payload: { to: string }, ack: Ack<{ to: string; accepted: boolean }>) => void;
+  /** `message`: a note for them (required); it opens your chat once they accept. */
+  'friends:request': (payload: { to: string; message: string }, ack: Ack<{ to: string; accepted: boolean }>) => void;
+  /** Turns "auto-block incoming friend requests" on or off. */
+  'friends:block-requests': (payload: { block: boolean }, ack: Ack) => void;
   /** Accepts or declines a request someone sent us. */
   'friends:respond': (payload: { from: string; accept: boolean }, ack: Ack) => void;
   /** Withdraws a request we sent. */
@@ -332,6 +348,8 @@ export interface ServerToClientEvents {
   'chat:cleared': (payload: { roomId: string }) => void;
   /** The owner took us out of this room (`banned`: and we can't come back). */
   'chat:removed': (payload: { roomId: string; by: string; banned: boolean }) => void;
+  /** A direct-message chat is no longer available (we or they ended the friendship). */
+  'chat:closed': (payload: { roomId: string }) => void;
 
   /** A call of ours just ended (or was missed) and was added to the history. */
   'history:new': (entry: CallHistoryEntry) => void;
@@ -343,7 +361,7 @@ export interface ServerToClientEvents {
   /** A friend shared a room with us (`call`: they invite us to its call rather than its chat). */
   'rooms:shared': (payload: { from: string; roomId: string; call: boolean; key?: string }) => void;
   /** Someone just sent us a friend request (for a toast). */
-  'friends:requested': (payload: { from: string }) => void;
+  'friends:requested': (payload: { from: string; message: string }) => void;
 
   /** Everyone's profile picture URL by lowercased user ID; sent on connect and whenever one changes. */
   'avatars:update': (urls: Record<string, string>) => void;
