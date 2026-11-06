@@ -411,6 +411,8 @@ export interface AdminOverview {
   serverStartedAt: number;
   version: string;
   memoryMb: number;
+  /** Whether "Forgot PIN?" emails can be sent (SMTP + PUBLIC_URL set). */
+  mailEnabled: boolean;
 }
 
 export interface AdminUser {
@@ -418,6 +420,8 @@ export interface AdminUser {
   createdAt: number;
   hasPin: boolean;
   googleEmail?: string;
+  /** Where "Forgot PIN?" sends reset links (set by the user, or by an admin). */
+  recoveryEmail?: string;
   suspended: boolean;
   lockedUntil: number;
   admin: boolean;

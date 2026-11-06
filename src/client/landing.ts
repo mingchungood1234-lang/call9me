@@ -209,6 +209,112 @@ function setupGoogleForm(form: HTMLFormElement): void {
 const googleForm = document.querySelector<HTMLFormElement>('#google-form');
 if (googleForm) setupGoogleForm(googleForm);
 
+/** "Forgot your PIN?": swap the sign-in form for a "send me a reset link" form. */
+function setupForgotPin(): void {
+  const form = $<HTMLFormElement>('#forgot-form');
+  const idInput = $<HTMLInputElement>('#forgot-id');
+  const hint = $<HTMLParagraphElement>('#forgot-hint');
+  const send = $<HTMLButtonElement>('#forgot-send');
+  const defaultHint = hint.textContent ?? '';
+  const others = ['#id-form', '#google-btn', '.or-divider', '#qr-signin'].map((s) => document.querySelector<HTMLElement>(s));
+  const show = (open: boolean) => {
+    form.hidden = !open;
+    for (const node of others) if (node) node.hidden = open;
+  };
+  $<HTMLButtonElement>('#forgot-btn').addEventListener('click', () => {
+    idInput.value = document.querySelector<HTMLInputElement>('#user-id')?.value.trim() ?? '';
+    hint.textContent = defaultHint;
+    hint.dataset.state = 'neutral';
+    show(true);
+    autoFocus(idInput);
+  });
+  $<HTMLButtonElement>('#forgot-cancel').addEventListener('click', () => show(false));
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const id = idInput.value.trim();
+    if (!isValidUserId(id)) {
+      hint.textContent = USER_ID_RULES;
+      hint.dataset.state = 'error';
+      idInput.focus();
+      return;
+    }
+    send.disabled = true;
+    try {
+      const res = await fetch('/api/forgot-pin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id }),
+      });
+      const data = (await res.json()) as { ok: boolean; message?: string; error?: string };
+      hint.textContent = data.ok ? (data.message ?? '') : (data.error ?? 'Something went wrong.');
+      hint.dataset.state = data.ok ? 'ok' : 'error';
+    } catch {
+      hint.textContent = 'Could not reach the server. Please try again.';
+      hint.dataset.state = 'error';
+    } finally {
+      send.disabled = false;
+    }
+  });
+}
+if (document.querySelector('#forgot-form')) setupForgotPin();
+
+/** The page a reset email links to: choose a new PIN, then sign in with it. */
+function setupResetPin(form: HTMLFormElement): void {
+  const pin = $<HTMLInputElement>('#reset-pin');
+  const pin2 = $<HTMLInputElement>('#reset-pin2');
+  const hint = $<HTMLParagraphElement>('#reset-hint');
+  const button = $<HTMLButtonElement>('#reset-btn');
+  const setHint = (text: string, state: 'neutral' | 'ok' | 'error') => {
+    hint.textContent = text;
+    hint.dataset.state = state;
+  };
+  for (const input of [pin, pin2]) {
+    input.addEventListener('input', () => {
+      input.value = input.value.replace(/\D/g, '').slice(0, 4);
+    });
+  }
+  autoFocus(pin);
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (!isValidPin(pin.value)) {
+      setHint(PIN_RULES, 'error');
+      pin.focus();
+      return;
+    }
+    if (pin.value !== pin2.value) {
+      setHint("The two PINs don't match.", 'error');
+      pin2.focus();
+      return;
+    }
+    button.disabled = true;
+    try {
+      const res = await fetch('/api/reset-pin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: form.dataset.token, pin: pin.value }),
+      });
+      const data = (await res.json()) as { ok: boolean; userId?: string; error?: string };
+      if (!data.ok) {
+        setHint(data.error ?? 'Something went wrong.', 'error');
+        return;
+      }
+      try {
+        localStorage.setItem(LAST_ID_KEY, data.userId ?? '');
+      } catch {
+        /* ignore */
+      }
+      setHint('Your new PIN is saved. Taking you to sign in…', 'ok');
+      setTimeout(() => window.location.replace('/'), 1200);
+    } catch {
+      setHint('Could not reach the server. Please try again.', 'error');
+    } finally {
+      button.disabled = false;
+    }
+  });
+}
+const resetForm = document.querySelector<HTMLFormElement>('#reset-form');
+if (resetForm) setupResetPin(resetForm);
+
 const PAIR_POLL_MS = 2000;
 
 /** "Sign in with a QR code": show a code, wait for a signed-in device to approve it, then go in. */

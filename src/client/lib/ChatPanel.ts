@@ -48,13 +48,11 @@ export class ChatPanel {
   private readonly listEl = $<HTMLUListElement>('#chat-list');
   private readonly joinForm = $<HTMLFormElement>('#room-form');
   private readonly roomInput = $<HTMLInputElement>('#room-id');
-  private readonly leaveBtn = $<HTMLButtonElement>('#leave-room-btn');
-  /** Opening the share dialog is up to the app (see app.ts); this only shows it while in a room. */
-  private readonly shareBtn = $<HTMLButtonElement>('#share-room-btn');
+  /** The ⚙ Settings button in the room header: every option for the room lives behind it. */
   private readonly moreBtn = $<HTMLButtonElement>('#room-more-btn');
   /** Whether the Archived section of the list is expanded. */
   private showArchived = false;
-  /** Pin / mute / archive / leave for one room (opened from ⋯ in the list or the header). */
+  /** Room settings (share, visibility, members, pin, mute, archive, leave…), opened from ⚙ in the room header. */
   private readonly actions: HTMLDialogElement;
   private readonly actionsTitle: HTMLElement;
   private readonly actionsList: HTMLElement;
@@ -70,6 +68,11 @@ export class ChatPanel {
   beforeJoin: (roomId: string, key?: string) => Promise<boolean> = async () => true;
   /** Asked before leaving (e.g. to warn that an invite-only room needs its link again). */
   beforeLeave: (roomId: string) => boolean = () => true;
+  /**
+   * The app's settings for a room, shown first in the settings sheet (share, and for the
+   * owner: visibility, members, delete). `close` closes the sheet.
+   */
+  roomSettings: (roomId: string, close: () => void) => HTMLElement[] = () => [];
   /** More people to suggest after `@` (besides this room's members). */
   mentionCandidates: () => string[] = () => [];
   /** Whether the open conversation is actually on screen (then new messages count as read). */
@@ -106,7 +109,6 @@ export class ChatPanel {
       e.preventDefault();
       this.join(this.roomInput.value.trim());
     });
-    this.leaveBtn.addEventListener('click', () => this.leave());
     this.moreBtn.addEventListener('click', () => {
       if (this.currentRoom) this.openActions(this.currentRoom);
     });
@@ -295,8 +297,6 @@ export class ChatPanel {
     this.listView.hidden = true;
     this.roomView.hidden = false;
     this.roomTitle.textContent = `${roomTitle(room)}${this.inbox.get(room)?.muted ? ' 🔕' : ''}`;
-    this.leaveBtn.hidden = isPublic;
-    this.shareBtn.hidden = isPublic;
     this.messageForm.hidden = !canPost;
     this.readonlyNote.hidden = canPost;
     this.messageInput.disabled = this.sendBtn.disabled = !canPost;
@@ -374,14 +374,6 @@ export class ChatPanel {
     const flags: HTMLElement[] = [];
     if (room.pinned) flags.push(el('span', { className: 'chat-flag', text: '📌', title: 'Pinned' }));
     if (room.muted) flags.push(el('span', { className: 'chat-flag', text: '🔕', title: 'Muted' }));
-    const more = el('button', { className: 'btn btn-ghost btn-small icon-only chat-item-more', text: '⋯', title: `Options for ${roomTitle(room.id)}` });
-    more.type = 'button';
-    more.setAttribute('aria-label', `Options for ${roomTitle(room.id)}`);
-    more.addEventListener('click', (e) => {
-      e.stopPropagation();
-      this.openActions(room.id);
-    });
-    more.addEventListener('keydown', (e) => e.stopPropagation()); // Enter/Space on ⋯ shouldn't open the room
 
     const unreadClass = room.unread ? ` has-unread${room.muted ? ' is-muted' : ''}` : '';
     const item = el('li', { className: `chat-item${unreadClass}${isPublic ? ' is-public' : ''}` }, [
@@ -397,16 +389,11 @@ export class ChatPanel {
           ...(room.unread ? [el('span', { className: 'chat-unread', text: room.unread > 99 ? '99+' : String(room.unread) })] : []),
         ]),
       ]),
-      more,
     ]);
     item.tabIndex = 0;
     item.setAttribute('role', 'button');
     item.setAttribute('aria-label', `${roomTitle(room.id)}${room.unread ? `, ${room.unread} unread` : ''}`);
     item.addEventListener('click', () => this.join(room.id));
-    item.addEventListener('contextmenu', (e) => {
-      e.preventDefault(); // long-press / right-click: the same options as ⋯
-      this.openActions(room.id);
-    });
     item.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault();
@@ -422,7 +409,8 @@ export class ChatPanel {
     const room = this.inbox.get(roomId);
     if (!room) return;
     const isPublic = roomId === PUBLIC_ROOM_ID;
-    this.actionsTitle.textContent = roomTitle(roomId);
+    this.actionsTitle.textContent = `${roomTitle(roomId)} · Settings`;
+    const close = () => this.actions.close();
     const option = (text: string, onClick: () => void, variant = 'btn-secondary') => {
       const button = el('button', { className: `btn ${variant}`, text });
       button.type = 'button';
@@ -432,16 +420,22 @@ export class ChatPanel {
       });
       return button;
     };
-    const buttons: HTMLButtonElement[] = [];
-    if (!isPublic) buttons.push(option(room.pinned ? '📌 Unpin' : '📌 Pin to top', () => this.setPrefs(roomId, { pinned: !room.pinned })));
-    buttons.push(
+    const section = (heading: string, items: HTMLElement[]) =>
+      items.length ? [el('div', { className: 'settings-section' }, [el('p', { className: 'settings-heading', text: heading }), ...items])] : [];
+
+    const roomItems = isPublic ? [] : this.roomSettings(roomId, close);
+    const chatPrefs: HTMLElement[] = [];
+    if (!isPublic) chatPrefs.push(option(room.pinned ? '📌 Unpin' : '📌 Pin to top', () => this.setPrefs(roomId, { pinned: !room.pinned })));
+    chatPrefs.push(
       option(room.muted ? '🔔 Unmute notifications' : '🔕 Mute notifications', () => this.setPrefs(roomId, { muted: !room.muted })),
     );
-    if (!isPublic) {
-      buttons.push(option(room.archived ? '📤 Unarchive' : '🗄️ Archive', () => this.setPrefs(roomId, { archived: !room.archived })));
-      buttons.push(option('Leave room', () => this.leave(roomId), 'btn-ghost btn-delete'));
-    }
-    this.actionsList.replaceChildren(...buttons);
+    if (!isPublic) chatPrefs.push(option(room.archived ? '📤 Unarchive' : '🗄️ Archive', () => this.setPrefs(roomId, { archived: !room.archived })));
+
+    this.actionsList.replaceChildren(
+      ...section('Room', roomItems),
+      ...section('Your chat', chatPrefs),
+      ...(isPublic ? [] : [option('🚪 Leave room', () => this.leave(roomId), 'btn-ghost btn-delete')]),
+    );
     this.actions.showModal();
   }
 

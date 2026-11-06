@@ -130,6 +130,152 @@ function button(text: string, variant: string, onClick: () => void, title = ''):
   return b;
 }
 const tag = (text: string, kind = '') => el('span', { className: `admin-badge ${kind}`, text });
+
+// ---- Edit dialogs ----
+
+let mailOn = false;
+const editDialog = el('dialog', { className: 'share-dialog admin-edit' });
+editDialog.addEventListener('click', (e) => {
+  if (e.target === editDialog) editDialog.close();
+});
+document.body.append(editDialog);
+
+/** A labelled field for the edit dialog. */
+function field(label: string, control: HTMLElement, hint = ''): HTMLElement {
+  const id = `edit-${Math.random().toString(36).slice(2, 8)}`;
+  control.id = id;
+  const l = el('label', { text: label });
+  l.htmlFor = id;
+  return el('div', { className: 'admin-field' }, [l, control, ...(hint ? [el('small', { className: 'admin-muted', text: hint })] : [])]);
+}
+
+function select(options: [string, string][], value: string): HTMLSelectElement {
+  const s = el('select');
+  for (const [v, text] of options) {
+    const o = el('option', { text });
+    o.value = v;
+    s.append(o);
+  }
+  s.value = value;
+  return s;
+}
+
+/**
+ * Opens the edit dialog. `save` gets called on "Save" and returns whether to close; `extra`
+ * are buttons for one-off actions (they run on their own).
+ */
+function openEditor(title: string, fields: HTMLElement[], save: () => Promise<boolean>, extra: HTMLElement[] = []): void {
+  const saveBtn = button('Save changes', 'btn-primary', async () => {
+    saveBtn.disabled = true;
+    try {
+      if (await save()) editDialog.close();
+    } finally {
+      saveBtn.disabled = false;
+    }
+  });
+  const cancel = button('Cancel', 'btn-ghost', () => editDialog.close());
+  editDialog.replaceChildren(
+    el('h3', { className: 'share-title', text: title }),
+    el('div', { className: 'admin-fields' }, fields),
+    ...(extra.length ? [el('div', { className: 'admin-edit-extra' }, extra)] : []),
+    el('div', { className: 'admin-edit-actions' }, [cancel, saveBtn]),
+  );
+  editDialog.showModal();
+}
+
+/** POSTs one change; true if it worked (its message is shown either way). */
+async function post(url: string, body: unknown = {}): Promise<boolean> {
+  const res = await api<{ message?: string }>('POST', url, body);
+  if (!res.ok) {
+    if (!res.locked) toast(res.error, 'error', 6000);
+    return false;
+  }
+  toast(res.message ?? 'Saved.', 'success');
+  return true;
+}
+
+function editUser(u: AdminUser): void {
+  const email = el('input');
+  email.type = 'email';
+  email.value = u.recoveryEmail ?? '';
+  email.placeholder = u.googleEmail ? `(uses Google: ${u.googleEmail})` : 'none';
+  const status = select(
+    [['online', 'Online'], ['idle', 'Idle'], ['dnd', 'Do not disturb'], ['invisible', 'Invisible']],
+    u.status,
+  );
+  const pin = el('input');
+  pin.type = 'text';
+  pin.inputMode = 'numeric';
+  pin.maxLength = 4;
+  pin.placeholder = 'leave empty to keep';
+  pin.autocomplete = 'off';
+  pin.addEventListener('input', () => (pin.value = pin.value.replace(/\D/g, '').slice(0, 4)));
+
+  const extra: HTMLElement[] = [];
+  if (mailOn) {
+    extra.push(button('✉️ Email a reset link', 'btn-secondary', () => void post(`/api/admin/users/${u.id}/send-reset`),
+      'Sends a one-time "choose a new PIN" link to their recovery email'));
+  }
+  openEditor(
+    `Edit ${u.id}`,
+    [
+      field('Recovery email', email, 'Where "Forgot PIN?" sends reset links. Empty removes it.'),
+      field('Status', status),
+      field('New PIN', pin, 'Optional. They are signed out everywhere; tell them the new PIN yourself.'),
+    ],
+    async () => {
+      if (pin.value && !isValidPin(pin.value)) {
+        toast(PIN_RULES, 'error');
+        pin.focus();
+        return false;
+      }
+      const changed = email.value.trim() !== (u.recoveryEmail ?? '') || status.value !== u.status;
+      let ok = true;
+      if (changed) ok = await post(`/api/admin/users/${u.id}/update`, { recoveryEmail: email.value.trim(), status: status.value });
+      if (ok && pin.value) ok = await post(`/api/admin/users/${u.id}/set-pin`, { pin: pin.value });
+      if (!changed && !pin.value) toast('Nothing changed.');
+      if (ok) void load('users');
+      return ok;
+    },
+    extra,
+  );
+}
+
+function editRoom(r: AdminRoom): void {
+  const visibility = select([['public', 'Public: everyone can see and join'], ['private', "Private: owner's friends only"], ['link', 'Link only: by invite link']], r.visibility);
+  const owner = el('input');
+  owner.value = r.owner;
+  owner.setAttribute('list', 'admin-user-ids');
+  owner.autocomplete = 'off';
+  const ids = el('datalist');
+  ids.id = 'admin-user-ids';
+  for (const u of users) {
+    const o = el('option');
+    o.value = u.id;
+    ids.append(o);
+  }
+  const resetKey = button('🔗 New invite link', 'btn-secondary', () => {
+    if (window.confirm(`Make a new invite link for #${r.id}? Links shared so far stop working.`)) {
+      void post(`/api/admin/rooms/${r.id}/reset-key`);
+    }
+  });
+  openEditor(
+    `Edit #${r.id}`,
+    [field('Who can see it', visibility), field('Owner', owner, 'Any account ID. The old owner stays in the room as a member.'), ids],
+    async () => {
+      let ok = true;
+      if (visibility.value !== r.visibility) ok = await post(`/api/admin/rooms/${r.id}/set-visibility`, { visibility: visibility.value });
+      const newOwner = owner.value.trim();
+      if (ok && newOwner && newOwner.toLowerCase() !== r.owner.toLowerCase()) {
+        if (!window.confirm(`Give #${r.id} to ${newOwner}?`)) return false;
+        ok = await post(`/api/admin/rooms/${r.id}/set-owner`, { userId: newOwner });
+      }
+      if (ok) void load('rooms');
+      return ok;
+    },
+    [resetKey],
+  );
+}
 const empty = (text: string) => el('li', { className: 'empty-state', text });
 
 // ---- Overview ----
@@ -159,8 +305,10 @@ function renderOverview(o: AdminOverview): void {
         )
       : [empty('No calls right now.')]),
   );
+  mailOn = o.mailEnabled;
   $('#ov-system').textContent =
-    `Server up ${formatDuration(Date.now() - o.serverStartedAt)} · build ${o.version} · ${o.memoryMb} MB memory`;
+    `Server up ${formatDuration(Date.now() - o.serverStartedAt)} · build ${o.version} · ${o.memoryMb} MB memory · ` +
+    `email ${o.mailEnabled ? 'on' : 'off (set SMTP_* and PUBLIC_URL in .env)'}`;
 }
 
 // ---- Users ----
@@ -174,7 +322,8 @@ function renderUsers(): void {
   const q = userSearch.value.trim().toLowerCase();
   const filter = userFilter.value;
   const shown = users.filter((u) => {
-    if (q && !u.id.toLowerCase().includes(q) && !(u.googleEmail ?? '').toLowerCase().includes(q)) return false;
+    const emails = `${u.googleEmail ?? ''} ${u.recoveryEmail ?? ''}`.toLowerCase();
+    if (q && !u.id.toLowerCase().includes(q) && !emails.includes(q)) return false;
     if (filter === 'online') return u.online > 0;
     if (filter === 'suspended') return u.suspended;
     if (filter === 'locked') return u.lockedUntil > 0;
@@ -193,11 +342,13 @@ function renderUser(u: AdminUser): HTMLLIElement {
     u.lockedUntil ? tag(`locked until ${dateTime(u.lockedUntil)}`, 'is-warn') : null,
   ].filter((b): b is HTMLSpanElement => b !== null);
   const how = [u.hasPin ? 'PIN' : null, u.googleEmail ? `Google (${u.googleEmail})` : null].filter(Boolean).join(' + ');
-  const facts = `${how || 'no sign-in method'} · joined ${date(u.createdAt)} · ${u.sessions} signed-in device(s) · ` +
+  const recovery = u.recoveryEmail ? `recovery ${u.recoveryEmail}` : 'no recovery email';
+  const facts = `${how || 'no sign-in method'} · ${recovery} · joined ${date(u.createdAt)} · ${u.sessions} signed-in device(s) · ` +
     `${u.pushDevices} with notifications · ${u.friends} friend(s) · ${u.rooms} room(s) · status ${u.status}`;
 
   const actions: HTMLElement[] = [];
   const protectedAdmin = u.admin && !me; // other admins are managed in .env
+  if (!protectedAdmin) actions.push(button('✏️ Edit', 'btn-primary', () => editUser(u), 'Recovery email, status, PIN'));
   if (!protectedAdmin) {
     actions.push(button('Sign out everywhere', 'btn-secondary', () => {
       if (window.confirm(`Sign ${u.id} out on every device?`)) void act(`/api/admin/users/${u.id}/sign-out`);
@@ -286,6 +437,7 @@ function renderRoom(r: AdminRoom): HTMLLIElement {
     }),
   ];
   if (!isPublicChat) {
+    actions.unshift(button('✏️ Edit', 'btn-primary', () => editRoom(r), 'Visibility, owner, invite link'));
     actions.push(button('Delete room', 'btn-ghost btn-delete', () => {
       if (window.confirm(`Delete #${r.id}? Everyone is moved out and its chat history is deleted.`)) {
         void act(`/api/admin/rooms/${r.id}/delete`);
@@ -333,6 +485,12 @@ const ACTION_LABELS: Record<string, string> = {
   'remove-member': 'removed someone from',
   'ban-member': 'banned someone from',
   'unban-member': 'unbanned someone in',
+  'update-user': 'edited',
+  'send-reset': 'emailed a PIN reset link to',
+  'self-reset-pin': 'reset their own PIN by email:',
+  'room-visibility': 'changed who can see',
+  'room-owner': 'changed the owner of',
+  'room-reset-key': 'made a new invite link for',
 };
 
 function renderLog(entries: AdminLogEntry[]): void {

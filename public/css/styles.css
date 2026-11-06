@@ -292,6 +292,13 @@ input:disabled { opacity: 0.5; }
 .menu-link { display: grid; padding: 9px 10px; border-radius: 10px; color: var(--text); font-weight: 500; text-decoration: none; }
 .menu-link:hover { background: var(--bg-hover); }
 .menu-link small { color: var(--muted); font-weight: 400; font-size: 0.75rem; }
+button.menu-link { width: 100%; border: none; background: none; font: inherit; text-align: left; cursor: pointer; }
+.recovery-form { display: grid; gap: 12px; }
+.recovery-field { display: grid; gap: 6px; }
+.recovery-field[hidden] { display: none; }
+.recovery-field label { font-size: 0.85rem; font-weight: 600; }
+.recovery-form .hint:empty { display: none; }
+.recovery-form .dialog-actions .btn { min-height: 44px; }
 /* Settings → "Scan QR to sign in a device": a real, easy-to-hit button. */
 .settings-menu .link-device-btn { margin: 2px 4px 6px; width: auto; min-height: 44px; }
 .link-device-btn svg { width: 20px; height: 20px; fill: currentColor; flex: none; }
@@ -383,6 +390,11 @@ body.landing {
 .google-form details { margin: 4px 0 10px; }
 .google-form summary { cursor: pointer; color: var(--primary); font-size: 0.88rem; font-weight: 600; margin-bottom: 8px; }
 .google-cancel { display: block; margin-top: 12px; text-align: center; font-size: 0.85rem; color: var(--muted); }
+.link-btn { padding: 0; border: none; background: none; font: inherit; color: var(--primary); cursor: pointer; }
+.link-btn:hover { text-decoration: underline; }
+.forgot-link { display: block; margin: 12px auto 0; font-size: 0.85rem; font-weight: 600; }
+#forgot-form[hidden], #id-form[hidden], #qr-signin[hidden] { display: none; }
+#forgot-form .btn-ghost { margin-top: 8px; }
 .hint[data-state='ok'] { color: var(--success); }
 .hint[data-state='error'] { color: var(--danger); }
 .error-banner {
@@ -784,7 +796,22 @@ body.app .install-hint { bottom: calc(var(--tabbar-h) + 12px + env(safe-area-ins
 .join-message { display: flex; gap: 6px; align-items: baseline; min-width: 0; font-size: 0.85rem; }
 .join-message-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .join-message time { flex: none; font-size: 0.72rem; color: var(--muted); }
-.room-actions-list { display: grid; gap: 8px; }
+.room-actions-list { display: grid; gap: 14px; }
+.settings-section { display: grid; gap: 8px; }
+.settings-heading { margin: 0; font-size: 0.72rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
+.settings-field { display: grid; gap: 6px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 12px; }
+.settings-label { font-size: 0.85rem; font-weight: 600; }
+.settings-hint { margin: 0; font-size: 0.78rem; color: var(--muted); }
+.visibility-segment { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; padding: 3px; border-radius: 10px; background: var(--surface-2); }
+.visibility-segment .btn { min-height: 34px; border: none; background: transparent; color: var(--muted); justify-content: center; }
+.visibility-segment .btn[aria-checked='true'] { background: var(--bg-elev); color: var(--text); box-shadow: var(--shadow-sm); }
+.visibility-segment .btn[aria-checked='true'][data-visibility='private'] { color: var(--warning); }
+.visibility-segment .btn[aria-checked='true'][data-visibility='link'] { color: var(--primary); }
+.room-settings-btn { display: inline-flex; align-items: center; gap: 6px; }
+.room-settings-btn svg { width: 16px; height: 16px; fill: currentColor; }
+/* Room rows now carry just Chat + Call: keep them on the same line as the name. */
+.room-row { flex-wrap: nowrap; }
+.room-row .row-actions { flex-basis: auto; }
 .room-actions-list .btn { justify-content: flex-start; min-height: 44px; }
 .link-step { display: grid; gap: 8px; }
 .link-step[hidden] { display: none; }
@@ -1885,6 +1912,14 @@ body.admin-page { min-height: 100dvh; background: var(--bg); }
 .admin-chip.is-banned { text-decoration: line-through; color: var(--muted); }
 .admin-chip.is-banned .btn { text-decoration: none; }
 .admin-chip .btn-small { min-height: 0; padding: 2px 8px; font-size: 0.75rem; }
+.admin-edit { width: min(460px, calc(100vw - 32px)); }
+.admin-fields { display: grid; gap: 14px; margin: 12px 0; }
+.admin-field { display: grid; gap: 5px; }
+.admin-field label { font-size: 0.85rem; font-weight: 600; }
+.admin-field input, .admin-field select { padding: 9px 11px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-input); color: var(--text); font: inherit; }
+.admin-field small { font-size: 0.75rem; }
+.admin-edit-extra { display: flex; flex-wrap: wrap; gap: 8px; padding-top: 10px; border-top: 1px solid var(--border); }
+.admin-edit-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
 @media (max-width: 720px) {
   .admin { padding: 10px; }
   .admin-who { display: none; }

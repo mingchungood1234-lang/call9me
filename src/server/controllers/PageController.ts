@@ -3,6 +3,8 @@ import { PIN_RULES, USER_ID_RULES } from '../../shared/validation';
 import { config, isAdmin } from '../config';
 import { refreshSessionCookie, requestUserId } from '../middleware/session';
 import { accountModel } from '../models/AccountModel';
+import { mailEnabled } from '../services/Mailer';
+import { pinResets } from '../services/PinReset';
 import { adminPasscodeSet } from './AdminController';
 import { googleEnabled, pendingGoogleFor, suggestId } from './GoogleAuthController';
 
@@ -36,6 +38,25 @@ export class PageController {
       pinRules: PIN_RULES,
       googleEnabled: googleEnabled(),
       googlePending: google ? { email: google.email, suggestion: suggestId(google) } : null,
+      mailEnabled: mailEnabled(),
+      reset: null,
+    });
+  }
+
+  /** GET /reset-pin?token=… — the link from a "Forgot PIN?" email: choose a new PIN. */
+  static resetPin(req: Request, res: Response): void {
+    const token = typeof req.query.token === 'string' ? req.query.token : '';
+    const key = pinResets.peek(token);
+    res.set('Cache-Control', 'no-store');
+    res.set('Referrer-Policy', 'no-referrer'); // the token is in the URL
+    res.render('index', {
+      error: key ? null : 'This reset link has expired or was already used. Ask for a new one below.',
+      rules: USER_ID_RULES,
+      pinRules: PIN_RULES,
+      googleEnabled: false,
+      googlePending: null,
+      mailEnabled: mailEnabled(),
+      reset: key ? { token, userId: accountModel.canonicalId(key) ?? key } : null,
     });
   }
 

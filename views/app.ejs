@@ -66,8 +66,9 @@
         <p class="menu-heading">Admin</p>
         <a class="menu-link" href="/admin" role="menuitem">Admin dashboard<small>Users, rooms and the audit log</small></a>
         <% } %>
-        <% if (googleEnabled) { %>
         <p class="menu-heading">Account</p>
+        <button id="recovery-email-btn" class="menu-link" type="button" role="menuitem">Recovery email<small>Where "Forgot PIN?" sends your reset link</small></button>
+        <% if (googleEnabled) { %>
         <% if (googleEmail) { %>
         <p class="menu-note">Google: <strong><%= googleEmail %></strong></p>
         <% } else { %>
@@ -281,9 +282,10 @@
         <button id="chat-back-btn" class="btn btn-ghost btn-small icon-only chat-back" type="button" aria-label="Back to chats" title="Back to chats">←</button>
         <strong id="room-title">Not in a room</strong>
         <span class="room-header-actions">
-          <button id="share-room-btn" class="btn btn-secondary btn-small" type="button" hidden>Share</button>
-          <button id="leave-room-btn" class="btn btn-ghost btn-small" type="button" hidden>Leave room</button>
-          <button id="room-more-btn" class="btn btn-ghost btn-small icon-only" type="button" aria-label="Room options" title="Pin, mute or archive">⋯</button>
+          <button id="room-more-btn" class="btn btn-ghost btn-small room-settings-btn" type="button" aria-label="Room settings" title="Room settings">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.4 13a7.6 7.6 0 0 0 0-2l2-1.6a.5.5 0 0 0 .1-.6l-1.9-3.3a.5.5 0 0 0-.6-.2l-2.4 1a7.3 7.3 0 0 0-1.7-1l-.4-2.6a.5.5 0 0 0-.5-.4h-3.8a.5.5 0 0 0-.5.4l-.4 2.6a7.3 7.3 0 0 0-1.7 1l-2.4-1a.5.5 0 0 0-.6.2L2.5 8.8a.5.5 0 0 0 .1.6l2 1.6a7.6 7.6 0 0 0 0 2l-2 1.6a.5.5 0 0 0-.1.6l1.9 3.3c.1.2.4.3.6.2l2.4-1c.5.4 1.1.7 1.7 1l.4 2.6c0 .2.3.4.5.4h3.8c.2 0 .5-.2.5-.4l.4-2.6c.6-.3 1.2-.6 1.7-1l2.4 1c.2.1.5 0 .6-.2l1.9-3.3a.5.5 0 0 0-.1-.6l-2-1.6ZM12 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7Z"/></svg>
+            <span>Settings</span>
+          </button>
         </span>
       </div>
       <div id="room-members" class="room-members"></div>

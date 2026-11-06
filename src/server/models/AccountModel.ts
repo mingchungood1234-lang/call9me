@@ -17,6 +17,8 @@ interface Account {
   googleEmail?: string;
   /** Set by an admin: can't sign in or stay connected until unsuspended. */
   suspended?: boolean;
+  /** Where "Forgot PIN?" sends the reset link (falls back to the Google email). */
+  recoveryEmail?: string;
 }
 
 /** An account as the admin dashboard lists it (never the PIN hash). */
@@ -25,6 +27,7 @@ export interface AccountInfo {
   createdAt: number;
   hasPin: boolean;
   googleEmail?: string;
+  recoveryEmail?: string;
   suspended: boolean;
   /** Locked out after wrong PINs until then (0: not locked). */
   lockedUntil: number;
@@ -142,6 +145,51 @@ export class AccountModel {
     return { ok: true, id: existing.id, created: false };
   }
 
+  // ---- Recovery email ("Forgot PIN?") ----
+
+  /** The address a reset link goes to: the recovery email, else the linked Google email. */
+  recoveryEmailOf(id: string): string | undefined {
+    const account = this.accounts.get(this.key(id));
+    return account?.recoveryEmail ?? account?.googleEmail;
+  }
+
+  /** Just the recovery email the user (or an admin) set, without the Google fallback. */
+  ownRecoveryEmailOf(id: string): string | undefined {
+    return this.accounts.get(this.key(id))?.recoveryEmail;
+  }
+
+  hasPin(id: string): boolean {
+    return !!this.accounts.get(this.key(id))?.pinHash;
+  }
+
+  /** `email` empty or undefined removes it. @returns whether the account exists. */
+  setRecoveryEmail(id: string, email: string | undefined): boolean {
+    const account = this.accounts.get(this.key(id));
+    if (!account) return false;
+    if (email) account.recoveryEmail = email;
+    else delete account.recoveryEmail;
+    this.persist();
+    return true;
+  }
+
+  /**
+   * Checks the PIN of an existing ID (never registers), counting wrong ones toward the
+   * lockout like a sign-in does. @returns null if right, else why not.
+   */
+  async verifyPin(id: string, pin: string): Promise<string | null> {
+    const key = this.key(id);
+    const failure = this.failures.get(key);
+    if (failure && failure.lockedUntil > Date.now()) return 'Too many wrong PINs. Try again later.';
+    const account = this.accounts.get(key);
+    if (!account?.salt || !account.pinHash) return 'This ID has no PIN.';
+    const hash = await scrypt(pin, account.salt, 32);
+    if (!timingSafeEqual(hash, Buffer.from(account.pinHash, 'hex'))) {
+      this.recordFailure(key);
+      return 'Wrong PIN.';
+    }
+    return null;
+  }
+
   // ---- Admin ----
 
   list(): AccountInfo[] {
@@ -154,6 +202,7 @@ export class AccountModel {
           createdAt: a.createdAt,
           hasPin: !!a.pinHash,
           googleEmail: a.googleEmail,
+          recoveryEmail: a.recoveryEmail,
           suspended: !!a.suspended,
           lockedUntil: lockedUntil > now ? lockedUntil : 0,
         };

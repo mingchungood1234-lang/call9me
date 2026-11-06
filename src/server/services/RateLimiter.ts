@@ -72,6 +72,11 @@ export const httpLimits = {
   pairApprove: new RateLimiter(20, 60_000),
   /** Admin passcode attempts (per IP, and per admin). */
   adminUnlock: new RateLimiter(5, 5 * 60_000),
+  /** "Forgot PIN?" emails: per IP, and per ID (so nobody can flood someone's inbox). */
+  forgotPin: new RateLimiter(5, 15 * 60_000),
+  forgotPinPerId: new RateLimiter(3, 60 * 60_000),
+  /** Choosing a new PIN from a reset link (per IP). */
+  resetPin: new RateLimiter(10, 15 * 60_000),
   /** Admin dashboard requests (per admin). */
   adminAction: new RateLimiter(240, 60_000),
 };

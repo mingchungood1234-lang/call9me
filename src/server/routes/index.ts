@@ -7,6 +7,7 @@ import { CallController } from '../controllers/CallController';
 import { GoogleAuthController } from '../controllers/GoogleAuthController';
 import { PageController } from '../controllers/PageController';
 import { PairingController } from '../controllers/PairingController';
+import { PinResetController } from '../controllers/PinResetController';
 import { PushController } from '../controllers/PushController';
 import { UserController } from '../controllers/UserController';
 import { appVersion } from '../services/AppVersion';
@@ -17,6 +18,7 @@ export const router = Router();
 router.get('/', PageController.landing);
 router.get('/app', PageController.app);
 router.get('/admin', PageController.admin);
+router.get('/reset-pin', PageController.resetPin);
 
 // The service worker must be served from the root so its scope covers the whole site.
 router.get('/sw.js', (_req, res) => {
@@ -32,6 +34,11 @@ router.get('/auth/google/callback', GoogleAuthController.callback);
 router.post('/api/login', AuthController.login);
 router.post('/api/google/complete', GoogleAuthController.complete);
 router.post('/api/logout', AuthController.logout);
+// "Forgot PIN?": a reset link by email (only when SMTP and PUBLIC_URL are set)
+router.post('/api/forgot-pin', PinResetController.forgot);
+router.post('/api/reset-pin', PinResetController.reset);
+router.get('/api/account/recovery-email', PinResetController.get);
+router.post('/api/account/recovery-email', PinResetController.set);
 router.post('/api/pair/start', PairingController.start);
 router.get('/api/pair/status', PairingController.status);
 router.post('/api/pair/info', PairingController.info);

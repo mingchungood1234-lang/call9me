@@ -9,6 +9,7 @@ import { CustomEmojiStore } from './lib/emoji';
 import { FriendsPanel } from './lib/FriendsPanel';
 import { JoinDialog } from './lib/JoinDialog';
 import { LinkDeviceDialog } from './lib/LinkDeviceDialog';
+import { RecoveryEmailDialog } from './lib/RecoveryEmailDialog';
 import { RoomMembersDialog } from './lib/RoomMembersDialog';
 import { RoomsPanel } from './lib/RoomsPanel';
 import { ShareDialog } from './lib/ShareDialog';
@@ -1265,7 +1266,6 @@ const rooms = new RoomsPanel(socket, userId, {
   },
   onJoinCall: (roomId) => joinRoomCall(roomId),
   onShare: (roomId) => share.open(roomId, false),
-  onLeave: (roomId) => chat.leave(roomId),
   onMembers: (roomId) => roomMembers.open(roomId),
 });
 const roomMembers = new RoomMembersDialog(socket);
@@ -1276,9 +1276,6 @@ const share = new ShareDialog(socket, {
   friends: () => friends?.current.friends ?? [],
   presenceOf: (id) => lastUsers.find((u) => u.id.toLowerCase() === id.toLowerCase())?.presence ?? 'away',
   keyOf: (roomId) => rooms.find(roomId)?.key,
-});
-$('#share-room-btn').addEventListener('click', () => {
-  if (chat.room) share.open(chat.room, false);
 });
 
 /** A friend shared a room with us: a small card to open it (or join its call) right away. */
@@ -1357,6 +1354,8 @@ chat.beforeJoin = async (roomId, key) => {
   if (rooms.find(roomId)?.owner.toLowerCase() === userId.toLowerCase()) return true;
   return joinDialog.open(roomId, key);
 };
+// The room part of a chat's ⚙ Settings (share; for the owner: visibility, members, delete).
+chat.roomSettings = (roomId, close) => rooms.settingsFor(roomId, close);
 // Leaving an invite-only room you don't own means needing its link to come back.
 chat.beforeLeave = (roomId) => {
   const room = rooms.find(roomId);
@@ -1491,6 +1490,13 @@ navigator.serviceWorker?.addEventListener('message', (event: MessageEvent<{ type
 });
 
 void push.init().then(renderPushStatus);
+
+// ---- Recovery email (for "Forgot your PIN?") ----
+const recoveryEmail = new RecoveryEmailDialog();
+$('#recovery-email-btn').addEventListener('click', () => {
+  setSettingsOpen(false);
+  void recoveryEmail.open();
+});
 
 // ---- Signing in other devices (QR code) ----
 const linkDevice = new LinkDeviceDialog(userId);

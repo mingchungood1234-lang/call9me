@@ -102,6 +102,22 @@ export class RoomSettingsModel {
     return removed;
   }
 
+  /** Hands the room to someone else (an admin's fix); the old owner stays in it as a member. */
+  setOwner(settings: RoomSettings, userId: string): void {
+    const previous = settings.owner;
+    settings.owner = userId;
+    this.removeMember(settings, userId);
+    this.unban(settings, userId);
+    this.addMember(settings, previous);
+    this.schedulePersist();
+  }
+
+  /** A new invite-link secret: links shared so far stop working (people who joined stay in). */
+  resetKey(settings: RoomSettings): void {
+    settings.key = newKey();
+    this.schedulePersist();
+  }
+
   addMember(settings: RoomSettings, userId: string): void {
     if (this.isMember(settings, userId) || settings.owner.toLowerCase() === userId.toLowerCase()) return;
     (settings.members ??= []).push(userId);

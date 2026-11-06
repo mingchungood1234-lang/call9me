@@ -1,7 +1,9 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import type { Request, Response } from 'express';
-import type { AdminOverview, AdminRoom, AdminUser } from '../../shared/types';
-import { isValidPin, PIN_RULES, PUBLIC_ROOM_ID } from '../../shared/validation';
+import { USER_STATUSES, type AdminOverview, type AdminRoom, type AdminUser, type RoomVisibility, type UserStatus } from '../../shared/types';
+import { isValidEmail, isValidPin, PIN_RULES, PUBLIC_ROOM_ID } from '../../shared/validation';
+import { mailEnabled } from '../services/Mailer';
+import { sendPinReset } from './PinResetController';
 import { config, isAdmin } from '../config';
 import { requestUserId, sessionTokenFrom } from '../middleware/session';
 import { accountModel } from '../models/AccountModel';
@@ -29,6 +31,7 @@ const MIN_PASSCODE_LENGTH = 12;
 const ADMIN_HEADER = 'x-call9me-admin';
 const serverStartedAt = Date.now();
 const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
+const ROOM_VISIBILITIES: readonly RoomVisibility[] = ['public', 'private', 'link'];
 
 /** Whether ADMIN_PASSCODE is set (long enough); without it the dashboard stays locked. */
 export function adminPasscodeSet(): boolean {
@@ -139,6 +142,7 @@ export class AdminController {
       serverStartedAt,
       version: appVersion(),
       memoryMb: Math.round(process.memoryUsage().rss / 1_048_576),
+      mailEnabled: mailEnabled(),
     };
     res.json({ ok: true, overview });
   }
@@ -159,7 +163,10 @@ export class AdminController {
     res.json({ ok: true, users });
   }
 
-  /** POST /api/admin/users/:id/:action — sign-out | set-pin { pin } | unlock | suspend | unsuspend | delete { confirm } */
+  /**
+   * POST /api/admin/users/:id/:action — sign-out | set-pin { pin } | unlock | suspend | unsuspend |
+   * delete { confirm } | update { recoveryEmail?, status? } | send-reset
+   */
   static async userAction(req: Request<{ id: string; action: string }>, res: Response): Promise<void> {
     const me = AdminController.unlockedAdmin(req, res);
     if (!me) return;
@@ -170,9 +177,44 @@ export class AdminController {
     // Admins are managed in .env: one admin can't lock another out (or take over their PIN).
     if (isAdmin(id) && !self && action !== 'unlock') return fail(res, 403, `${id} is an admin. Manage admins in .env.`);
     if (self && (action === 'suspend' || action === 'delete')) return fail(res, 403, "You can't do that to your own account.");
-    const body = (req.body ?? {}) as { pin?: unknown; confirm?: unknown };
+    const body = (req.body ?? {}) as { pin?: unknown; confirm?: unknown; recoveryEmail?: unknown; status?: unknown };
 
     switch (action) {
+      case 'update': {
+        const changes: string[] = [];
+        if (body.recoveryEmail !== undefined) {
+          const email = typeof body.recoveryEmail === 'string' ? body.recoveryEmail.trim() : '';
+          if (email && !isValidEmail(email)) return fail(res, 400, 'That does not look like an email address.');
+          if ((accountModel.ownRecoveryEmailOf(id) ?? '') !== email) {
+            accountModel.setRecoveryEmail(id, email || undefined);
+            changes.push(email ? `recovery email → ${email}` : 'recovery email removed');
+          }
+        }
+        if (body.status !== undefined) {
+          if (!USER_STATUSES.includes(body.status as UserStatus)) return fail(res, 400, 'Unknown status');
+          const status = body.status as UserStatus;
+          if (userStatusModel.get(id) !== status) {
+            userStatusModel.set(id, status);
+            AdminController.io?.to(userChannel(id)).emit('status:update', { status });
+            CallController.signaling?.broadcastUsers();
+            changes.push(`status → ${status}`);
+          }
+        }
+        if (!changes.length) return void res.json({ ok: true, message: 'Nothing changed.' });
+        adminLogModel.add(me, 'update-user', id, changes.join(', '));
+        return void res.json({ ok: true, message: `Saved ${id}: ${changes.join(', ')}.` });
+      }
+      case 'send-reset': {
+        if (!mailEnabled()) return fail(res, 503, 'Email is not set up (SMTP_* and PUBLIC_URL in .env).');
+        if (!accountModel.recoveryEmailOf(id)) return fail(res, 400, `${id} has no recovery email. Add one first.`);
+        try {
+          const to = await sendPinReset(id);
+          adminLogModel.add(me, 'send-reset', id, to);
+          return void res.json({ ok: true, message: `A reset link was emailed to ${to}.` });
+        } catch (err) {
+          return fail(res, 502, `The mail server refused it: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
       case 'sign-out': {
         const count = AdminController.signOutEverywhere(id);
         adminLogModel.add(me, 'sign-out', id, `${count} session(s)`);
@@ -251,7 +293,10 @@ export class AdminController {
     res.json({ ok: true, rooms });
   }
 
-  /** POST /api/admin/rooms/:id/:action — delete | clear-history | remove-member { userId, ban } | unban { userId } */
+  /**
+   * POST /api/admin/rooms/:id/:action — delete | clear-history | remove-member { userId, ban } |
+   * unban { userId } | set-visibility { visibility } | set-owner { userId } | reset-key
+   */
   static roomAction(req: Request<{ id: string; action: string }>, res: Response): void {
     const me = AdminController.unlockedAdmin(req, res);
     if (!me) return;
@@ -259,7 +304,7 @@ export class AdminController {
     if (!chat) return fail(res, 503, 'The server is still starting');
     const roomId = req.params.id.toLowerCase();
     const { action } = req.params;
-    const body = (req.body ?? {}) as { userId?: unknown; ban?: unknown };
+    const body = (req.body ?? {}) as { userId?: unknown; ban?: unknown; visibility?: unknown };
 
     if (action === 'clear-history') {
       if (roomId !== PUBLIC_ROOM_ID && !roomSettingsModel.get(roomId)) return fail(res, 404, 'No such room');
@@ -285,6 +330,31 @@ export class AdminController {
         adminLogModel.add(me, ban ? 'ban-member' : 'remove-member', `#${roomId}`, target);
         return void res.json({ ok: true, message: `${target} was ${ban ? 'banned from' : 'removed from'} #${roomId}.` });
       }
+      case 'set-visibility': {
+        const visibility = body.visibility as RoomVisibility;
+        if (!ROOM_VISIBILITIES.includes(visibility)) return fail(res, 400, 'Choose public, private or link');
+        if (settings.visibility === visibility) return void res.json({ ok: true, message: 'Nothing changed.' });
+        roomSettingsModel.setVisibility(roomId, visibility);
+        roomDirectory.changed();
+        adminLogModel.add(me, 'room-visibility', `#${roomId}`, visibility);
+        return void res.json({ ok: true, message: `#${roomId} is now ${visibility === 'link' ? 'link only' : visibility}.` });
+      }
+      case 'set-owner': {
+        const owner = accountModel.canonicalId(target);
+        if (!owner) return fail(res, 404, 'No account with that ID');
+        if (same(owner, settings.owner)) return void res.json({ ok: true, message: `${owner} already owns #${roomId}.` });
+        const previous = settings.owner;
+        roomSettingsModel.setOwner(settings, owner);
+        roomDirectory.changed();
+        adminLogModel.add(me, 'room-owner', `#${roomId}`, `${previous} → ${owner}`);
+        return void res.json({ ok: true, message: `${owner} now owns #${roomId} (${previous} stays as a member).` });
+      }
+      case 'reset-key': {
+        roomSettingsModel.resetKey(settings);
+        roomDirectory.changed();
+        adminLogModel.add(me, 'room-reset-key', `#${roomId}`);
+        return void res.json({ ok: true, message: `#${roomId} has a new invite link; old links stop working.` });
+      }
       case 'unban': {
         if (!roomSettingsModel.unban(settings, target)) return fail(res, 400, `${target} isn't banned from #${roomId}`);
         roomDirectory.changed();
@@ -305,7 +375,7 @@ export class AdminController {
   // ---- Helpers ----
 
   /** Ends every session of the user and disconnects their open apps. @returns sessions ended. */
-  private static signOutEverywhere(userId: string): number {
+  static signOutEverywhere(userId: string): number {
     const count = sessionModel.destroyAllFor(userId);
     AdminController.io?.in(userChannel(userId)).disconnectSockets(true);
     return count;

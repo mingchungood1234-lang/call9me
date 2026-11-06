@@ -21,7 +21,6 @@ export interface RoomsPanelEvents {
   onOpenChat(roomId: string): void;
   onJoinCall(roomId: string): void;
   onShare(roomId: string): void;
-  onLeave(roomId: string): void;
   /** Our own room: see who's in it, remove or ban people. */
   onMembers(roomId: string): void;
 }
@@ -98,6 +97,56 @@ export class RoomsPanel {
     }));
   }
 
+  /**
+   * The room part of a chat's ⚙ Settings sheet: Share for everyone; for the owner also who
+   * can see it (Public / Private / Link only), Members and Delete. `close` closes the sheet.
+   */
+  settingsFor(roomId: string, close: () => void): HTMLElement[] {
+    const room = this.find(roomId);
+    const option = (text: string, variant: string, onClick: () => void) => {
+      const button = el('button', { className: `btn ${variant}`, text });
+      button.type = 'button';
+      button.addEventListener('click', () => {
+        close();
+        onClick();
+      });
+      return button;
+    };
+    const items: HTMLElement[] = [option('🔗 Share room', 'btn-secondary', () => this.events.onShare(roomId))];
+    if (!room || !this.isMine(room)) return items;
+
+    // Who can see it: three choices, the current one highlighted (picking one keeps the sheet open).
+    const segment = el('div', { className: 'visibility-segment' });
+    segment.setAttribute('role', 'radiogroup');
+    segment.setAttribute('aria-label', 'Who can see this room');
+    const hint = el('p', { className: 'settings-hint', text: VISIBILITY_TITLES[room.visibility] });
+    const renderSegment = (current: RoomVisibility) => {
+      segment.replaceChildren(
+        ...(Object.keys(VISIBILITY_LABELS) as RoomVisibility[]).map((v) => {
+          const b = el('button', { className: 'btn btn-small', text: VISIBILITY_LABELS[v], title: VISIBILITY_TITLES[v] });
+          b.type = 'button';
+          b.dataset.visibility = v;
+          b.setAttribute('role', 'radio');
+          b.setAttribute('aria-checked', String(v === current));
+          b.addEventListener('click', () => {
+            if (v === current) return;
+            this.setVisibility(room, v);
+            hint.textContent = VISIBILITY_TITLES[v];
+            renderSegment(v);
+          });
+          return b;
+        }),
+      );
+    };
+    renderSegment(room.visibility);
+    items.push(
+      el('div', { className: 'settings-field' }, [el('span', { className: 'settings-label', text: 'Who can see it' }), segment, hint]),
+      option('👥 Members', 'btn-secondary', () => this.events.onMembers(roomId)),
+      option('🗑️ Delete room', 'btn-ghost btn-delete', () => this.remove(room)),
+    );
+    return items;
+  }
+
   private setVisibility(room: RoomSummary, visibility: RoomVisibility): void {
     if (!this.socket.connected) {
       toast(NOT_CONNECTED, 'error');
@@ -157,25 +206,9 @@ export class RoomsPanel {
     const call = this.button(room.inCall ? 'Join call' : 'Call', 'btn-primary', `Join the call in #${room.id}`, () =>
       this.events.onJoinCall(room.id),
     );
-    const share = this.button('Share', 'btn-ghost', `Share #${room.id} with friends or copy its link`, () =>
-      this.events.onShare(room.id),
-    );
-    const actions: HTMLElement[] = [share, chat, call];
-    if (mine) {
-      const next = NEXT_VISIBILITY[room.visibility];
-      const toggle = this.button(
-        VISIBILITY_LABELS[room.visibility],
-        'btn-ghost visibility-toggle',
-        `${VISIBILITY_TITLES[room.visibility]}. Tap to make it ${VISIBILITY_LABELS[next].toLowerCase()}.`,
-        () => this.setVisibility(room, next),
-      );
-      toggle.dataset.visibility = room.visibility;
-      actions.unshift(toggle);
-      actions.push(this.button('Members', 'btn-ghost', `See who's in #${room.id}, remove or ban people`, () => this.events.onMembers(room.id)));
-      actions.push(this.button('Delete', 'btn-ghost btn-delete', `Delete #${room.id} for everyone`, () => this.remove(room)));
-    } else if (room.joined) {
-      actions.push(this.button('Leave', 'btn-ghost btn-delete', `Leave #${room.id}`, () => this.events.onLeave(room.id)));
-    }
+    // Only what you come here for; sharing, visibility, members, deleting and leaving are in
+    // the room's ⚙ Settings, inside its chat.
+    const actions: HTMLElement[] = [chat, call];
 
     const item = el('li', { className: `user-item person-row room-row ${room.visibility}` }, [
       icon,

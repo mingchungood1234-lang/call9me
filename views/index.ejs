@@ -15,7 +15,21 @@
       <span>Group calls</span><span>Screen sharing</span><span>Chat rooms</span>
     </div>
 
-    <% if (googlePending) { %>
+    <% if (reset) { %>
+    <!-- From a "Forgot PIN?" email: choose a new PIN -->
+    <form id="reset-form" class="google-form" data-token="<%= reset.token %>" data-user-id="<%= reset.userId %>" novalidate>
+      <p class="google-signed">New PIN for <strong><%= reset.userId %></strong></p>
+      <label for="reset-pin">New 4-digit PIN</label>
+      <input id="reset-pin" type="password" inputmode="numeric" pattern="[0-9]{4}" maxlength="4"
+             autocomplete="new-password" placeholder="••••" class="pin-input" required>
+      <label for="reset-pin2">Type it again</label>
+      <input id="reset-pin2" type="password" inputmode="numeric" pattern="[0-9]{4}" maxlength="4"
+             autocomplete="new-password" placeholder="••••" class="pin-input" required>
+      <p id="reset-hint" class="hint" data-state="neutral" aria-live="polite">You'll be signed out on every device, then sign in with the new PIN.</p>
+      <button type="submit" id="reset-btn" class="btn btn-primary btn-block">Save new PIN</button>
+      <a class="google-cancel" href="/">Back to sign in</a>
+    </form>
+    <% } else if (googlePending) { %>
     <!-- First sign-in with Google: pick a Call9me ID, or link an existing one with its PIN. -->
     <form id="google-form" class="google-form" novalidate>
       <p class="google-signed">Signed in with Google as <strong><%= googlePending.email %></strong></p>
@@ -55,7 +69,24 @@
       </p>
 
       <button type="submit" id="enter-btn" class="btn btn-primary btn-block">Continue</button>
+      <% if (mailEnabled) { %>
+      <button type="button" id="forgot-btn" class="link-btn forgot-link">Forgot your PIN?</button>
+      <% } %>
     </form>
+    <% if (mailEnabled) { %>
+    <!-- "Forgot PIN?": a reset link to the ID's recovery email -->
+    <form id="forgot-form" class="google-form" hidden novalidate>
+      <p class="google-signed"><strong>Reset your PIN</strong></p>
+      <label for="forgot-id">Your ID</label>
+      <input id="forgot-id" type="text" maxlength="20" autocomplete="username" autocapitalize="off"
+             autocorrect="off" spellcheck="false" required>
+      <p id="forgot-hint" class="hint" data-state="neutral" aria-live="polite">
+        We'll email a reset link to the recovery email of this ID (set it in the app: profile menu → Recovery email).
+      </p>
+      <button type="submit" id="forgot-send" class="btn btn-primary btn-block">Email me a reset link</button>
+      <button type="button" id="forgot-cancel" class="btn btn-ghost btn-block">Back to sign in</button>
+    </form>
+    <% } %>
     <!-- Sign in with a QR code: approved from a device that's already signed in -->
     <div id="qr-signin" class="qr-signin">
       <button type="button" id="qr-btn" class="btn btn-secondary btn-block">Sign in with a QR code</button>

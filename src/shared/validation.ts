@@ -57,3 +57,10 @@ export function isValidUserId(value: unknown): value is string {
 export function isValidRoomId(value: unknown): value is string {
   return typeof value === 'string' && ROOM_ID_PATTERN.test(value);
 }
+
+export const MAX_EMAIL_LENGTH = 254;
+
+/** A plausible email address (the mail server has the final word). */
+export function isValidEmail(value: unknown): value is string {
+  return typeof value === 'string' && value.length <= MAX_EMAIL_LENGTH && /^[^\s@<>()",;:]+@[^\s@<>()",;:]+\.[^\s@<>()",;:]{2,}$/.test(value);
+}

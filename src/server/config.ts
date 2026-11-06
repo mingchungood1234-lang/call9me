@@ -132,4 +132,21 @@ export const config = {
   adminUnlockMs: 15 * 60_000,
   /** The site's public address (e.g. https://call.example.com); derived from each request when unset. */
   publicUrl: process.env.PUBLIC_URL?.trim().replace(/\/+$/, '') ?? '',
+  /**
+   * Outgoing email for "Forgot PIN?" (e.g. Gmail: smtp.gmail.com, port 465, your address and
+   * an App Password). Off unless host, user, password and PUBLIC_URL are all set: reset links
+   * are only ever built from PUBLIC_URL, never from a request's Host header.
+   */
+  smtp: {
+    host: process.env.SMTP_HOST?.trim() ?? '',
+    port: Number(process.env.SMTP_PORT ?? 465),
+    /** TLS from the start (port 465). Port 587 uses STARTTLS instead: set SMTP_SECURE=false. */
+    secure: (process.env.SMTP_SECURE ?? (Number(process.env.SMTP_PORT ?? 465) === 465 ? 'true' : 'false')).trim() !== 'false',
+    user: process.env.SMTP_USER?.trim() ?? '',
+    // Gmail shows App Passwords in groups of four ("abcd efgh ijkl mnop"): spaces are not part of it.
+    pass: (process.env.SMTP_PASS ?? '').replace(/\s+/g, ''),
+    from: process.env.SMTP_FROM?.trim() ?? '',
+  },
+  /** How long a "reset your PIN" link works. */
+  pinResetTtlMs: 30 * 60_000,
 };
