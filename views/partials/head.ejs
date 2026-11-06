@@ -27,4 +27,32 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/css/styles.css?v=<%= assetVersion %>">
 <meta name="app-version" content="<%= assetVersion %>">
-<% if (locals.androidApp) { %><meta name="android-app" content="/download/android"><% } %>
+<% if (locals.androidApp) { %>
+<meta name="android-app" content="/download/android">
+<script>
+  // Call9me on Android is the app (android/), not the website or a PWA. Runs before anything else:
+  // inside the app (launched with ?twa=1, or with an android-app:// referrer) remember that for
+  // this window; in an Android browser tab, go to the "get the app" page instead.
+  (function () {
+    var KEY = 'call9me:inAndroidApp';
+    var params = new URLSearchParams(location.search);
+    var marked = params.get('twa') === '1' || document.referrer.indexOf('android-app://') === 0;
+    var inApp = marked;
+    try {
+      if (marked) sessionStorage.setItem(KEY, '1');
+      inApp = inApp || sessionStorage.getItem(KEY) === '1';
+    } catch (e) {}
+    if (params.has('twa')) {
+      params.delete('twa');
+      var q = params.toString();
+      history.replaceState(history.state, '', location.pathname + (q ? '?' + q : '') + location.hash);
+    }
+    var exempt = location.pathname === '/get-app' || location.pathname === '/reset-pin';
+    if (inApp || exempt || !/android/i.test(navigator.userAgent)) return;
+    // Only real browser tabs: a home-screen PWA gets a "switch to the app" card instead, so a
+    // window the app opens from a call notification can never be shut out.
+    if (!window.matchMedia('(display-mode: browser)').matches) return;
+    location.replace('/get-app?next=' + encodeURIComponent(location.pathname + location.search));
+  })();
+</script>
+<% } %>

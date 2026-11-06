@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <%- include('partials/head', { title: 'Call9me — Get the Android app' }) %>
+</head>
+<body class="landing">
+  <div class="bg-blobs" aria-hidden="true"><span></span><span></span><span></span></div>
+
+  <main class="landing-card get-app">
+    <div class="brand-mark" aria-hidden="true">9</div>
+    <h1><span class="brand-name">Call9me</span> for Android</h1>
+    <p class="tagline">On Android, Call9me is an app. Install it to call, chat and get notified of calls.</p>
+
+    <a id="get-app-download" class="btn btn-primary btn-block" href="/download/android" download="Call9me.apk">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 3a1 1 0 0 1 1 1v9.59l3.3-3.3a1 1 0 1 1 1.4 1.42l-5 5a1 1 0 0 1-1.4 0l-5-5a1 1 0 1 1 1.4-1.42l3.3 3.3V4a1 1 0 0 1 1-1Zm-7 15a1 1 0 0 1 1 1v1h12v-1a1 1 0 1 1 2 0v2a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-2a1 1 0 0 1 1-1Z"/></svg>
+      Download the app
+    </a>
+    <p class="get-app-meta">Call9me.apk · <%= sizeMb %> MB<% if (versionName) { %> · version <%= versionName %><% } %></p>
+
+    <a id="get-app-open" class="btn btn-secondary btn-block" href="<%= openUrl %>">Already installed? Open the app</a>
+
+    <ol class="get-app-steps">
+      <li>Tap <strong>Download the app</strong>, then <strong>Open</strong> when the download finishes (or find <strong>Call9me.apk</strong> in your Downloads).</li>
+      <li>If Android asks, tap <strong>Settings</strong> and turn on <strong>Allow from this source</strong>, then go back.</li>
+      <li>Tap <strong>Install</strong>, then <strong>Open</strong>. Call9me is now in your app drawer.</li>
+    </ol>
+
+    <details class="get-app-help">
+      <summary>Can't install or open it?</summary>
+      <ul>
+        <li><strong>"Blocked by Play Protect" or "Unsafe app"</strong>: tap <strong>More details</strong> → <strong>Install anyway</strong>. The app isn't on the Play Store, so Google doesn't know it yet.</li>
+        <li><strong>"For your security, your phone is not allowed to install unknown apps"</strong>: open Settings → Apps → your browser (e.g. Chrome) → <strong>Install unknown apps</strong> → allow.</li>
+        <li><strong>"App not installed"</strong> or <strong>"conflicts with an existing package"</strong>: uninstall the old Call9me app first, then install again.</li>
+        <li><strong>Tapping the file does nothing</strong>: open your phone's <strong>Files</strong> or <strong>Downloads</strong> app and tap <strong>Call9me.apk</strong> there.</li>
+        <li><strong>The app opens and closes straight away</strong>: install or update <strong>Google Chrome</strong> from the Play Store. The app uses it to run.</li>
+        <li>Old <strong>Call9me icon from "Add to Home screen"</strong>: long-press it → <strong>Uninstall</strong>, and use the app instead.</li>
+      </ul>
+    </details>
+  </main>
+  <script>
+    // Already inside the app (e.g. after a redirect): go back to where the user was heading.
+    try {
+      if (sessionStorage.getItem('call9me:inAndroidApp') === '1') location.replace(<%- JSON.stringify(next).replace(/</g, '\\u003c') %>);
+    } catch (e) {}
+  </script>
+</body>
+</html>

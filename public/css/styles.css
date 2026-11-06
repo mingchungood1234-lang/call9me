@@ -378,6 +378,17 @@ body.landing {
 /* Sign in with a QR code */
 .qr-signin { margin-top: 12px; }
 .android-get { margin-top: 12px; }
+/* /get-app: Android browsers are sent here (Call9me on Android is the app) */
+.get-app h1 { font-size: 1.7rem; }
+.get-app .btn svg { width: 20px; height: 20px; }
+.get-app-meta { margin: 8px 0 14px; color: var(--muted); font-size: 0.8rem; }
+.get-app-steps { margin: 20px 0 0; padding-left: 22px; text-align: left; font-size: 0.9rem; line-height: 1.6; }
+.get-app-steps li + li { margin-top: 6px; }
+.get-app-steps strong, .get-app-help strong { color: var(--primary); }
+.get-app-help { margin-top: 18px; text-align: left; font-size: 0.85rem; line-height: 1.55; color: var(--muted); }
+.get-app-help summary { cursor: pointer; color: var(--text); font-weight: 600; text-align: center; }
+.get-app-help ul { margin: 10px 0 0; padding-left: 18px; }
+.get-app-help li + li { margin-top: 8px; }
 .android-get svg { width: 20px; height: 20px; color: #3ddc84; }
 .qr-panel { display: grid; gap: 8px; justify-items: center; text-align: center; }
 .qr-panel[hidden] { display: none; }

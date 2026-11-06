@@ -20,6 +20,7 @@ router.get('/', PageController.landing);
 router.get('/app', PageController.app);
 router.get('/admin', PageController.admin);
 router.get('/reset-pin', PageController.resetPin);
+router.get('/get-app', PageController.getApp);
 
 // The service worker must be served from the root so its scope covers the whole site.
 router.get('/sw.js', (_req, res) => {

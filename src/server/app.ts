@@ -1,4 +1,5 @@
 import express from 'express';
+import fs from 'node:fs';
 import path from 'node:path';
 import { config } from './config';
 import { avatarModel } from './models/AvatarModel';
@@ -7,6 +8,22 @@ import { stickerModel } from './models/StickerModel';
 import { router } from './routes';
 import { androidApp } from './services/AndroidApp';
 import { appVersion } from './services/AppVersion';
+
+let manifestCache: { mtimeMs: number; json: Record<string, unknown> } | null = null;
+
+/** public/manifest.webmanifest plus a pointer to the Android app (no PWA install on Android). */
+function androidManifest(packageName: string): Record<string, unknown> {
+  const file = path.join(config.rootDir, 'public', 'manifest.webmanifest');
+  const mtimeMs = fs.statSync(file).mtimeMs;
+  if (manifestCache?.mtimeMs !== mtimeMs) {
+    manifestCache = { mtimeMs, json: JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, unknown> };
+  }
+  return {
+    ...manifestCache.json,
+    prefer_related_applications: true,
+    related_applications: [{ platform: 'play', id: packageName }],
+  };
+}
 
 export function createApp(): express.Express {
   const app = express();
@@ -17,6 +34,19 @@ export function createApp(): express.Express {
   app.set('views', path.join(config.rootDir, 'views'));
 
   app.use(express.json({ limit: '10kb' }));
+  // On Android, when the app exists, the manifest points to it so Chrome stops offering to install
+  // the website as a PWA (Call9me on Android is the app). Everyone else gets the file as is.
+  app.get('/manifest.webmanifest', (req, res, next) => {
+    const android = androidApp();
+    if (android) res.set('Vary', 'User-Agent'); // a shared cache must not mix the two versions
+    if (!android || !/android/i.test(req.get('user-agent') ?? '')) {
+      next();
+      return;
+    }
+    res.set('Cache-Control', 'no-cache');
+    res.type('application/manifest+json');
+    res.send(androidManifest(android.packageName));
+  });
   app.use(express.static(path.join(config.rootDir, 'public')));
   // Custom emoji pictures; URLs carry ?v=<added at>, so they can be cached for good.
   // Profile pictures: only image files named after a user ID (never the index).

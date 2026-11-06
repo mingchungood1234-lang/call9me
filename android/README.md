@@ -26,13 +26,14 @@ The first run takes a few minutes while it downloads the Android SDK into a Dock
 - `public/downloads/call9me.apk`: the app, served at **`/download/android`**
 - `public/downloads/android.json`: its package name and signing-certificate fingerprint, served as **`/.well-known/assetlinks.json`**
 
-Commit `public/downloads/` and deploy as usual (`docker compose up -d --build`). Android visitors then see:
+Commit `public/downloads/` and deploy as usual (`docker compose up -d --build`). From then on, **Call9me on Android is the app only**:
 
-- A **Get the Android app** button on the sign-in page.
-- A card in place of the "Add to Home Screen" hint.
-- **Get the Android app** in the profile menu.
+- **Android browser tabs** go straight to **`/get-app`** before anything loads. That page has a download button, an **Open the app** button (keeping call links such as `/app?call=room`), install steps, and fixes for common install problems. A `/reset-pin` link from an email still works in the browser.
+- **The website can't be installed as a PWA on Android.** Android visitors get a manifest that points to the app (`prefer_related_applications`), so Chrome stops offering "Install app". The site never shows its own "Add to Home Screen" hint there either.
+- **Existing home-screen PWAs** show **Switch to the Call9me Android app** each time they're opened, with a step to remove the old icon. This prompt isn't a hard block. A web page can't reliably tell an old PWA from the app's own windows, and a window the app opens from a call notification must never be shut out.
+- **Inside the app**, none of this appears. The app launches `https://your-domain/?twa=1`, and the page remembers that marker for the window. The `android-app://` referrer is a backup.
 
-On Android the site never suggests the PWA ("Add to Home Screen") once an APK exists. The card comes back on every visit, and "Not now" hides it for that visit only. People who already added the PWA to their home screen get a **Switch to the Call9me Android app** card each time they open it, with a step for removing the old icon. None of this shows inside the app itself.
+If you change this launch URL, rebuild the APK, and everyone needs the new version.
 
 Check `https://your-domain/.well-known/assetlinks.json` after deploying. If it returns `[]`, Chrome shows a browser bar at the top of the app.
 

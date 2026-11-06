@@ -36,7 +36,9 @@ android {
 
         manifestPlaceholders = [
                 hostName         : twaHost,
-                launchUrl        : "https://${twaHost}/".toString(),
+                // ?twa=1 tells the site it runs inside the app (views/partials/head.ejs), so it never
+                // sends app users to the "get the app" page meant for Android browsers.
+                launchUrl        : "https://${twaHost}/?twa=1".toString(),
                 providerAuthority: "${appId}.fileprovider".toString(),
         ]
         resValue 'string', 'assetStatements', assetStatements

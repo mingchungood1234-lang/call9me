@@ -3,6 +3,7 @@ import { PIN_RULES, USER_ID_RULES } from '../../shared/validation';
 import { config, isAdmin } from '../config';
 import { refreshSessionCookie, requestUserId } from '../middleware/session';
 import { accountModel } from '../models/AccountModel';
+import { androidApp } from '../services/AndroidApp';
 import { mailEnabled } from '../services/Mailer';
 import { pinResets } from '../services/PinReset';
 import { adminPasscodeSet } from './AdminController';
@@ -27,7 +28,9 @@ export class PageController {
     const code = typeof req.query.error === 'string' ? req.query.error : '';
     // Installed PWAs start at "/": go straight to the app when already signed in.
     if (requestUserId(req) && (!code || code === 'session')) {
-      res.redirect(safeNext(req.query.next));
+      // Keep the Android app's launch marker (?twa=1) so /app knows it runs inside the app.
+      const next = safeNext(req.query.next);
+      res.redirect(req.query.twa === '1' ? `${next}${next.includes('?') ? '&' : '?'}twa=1` : next);
       return;
     }
     // After "Continue with Google" for a new Google account: pick an ID (or link one).
@@ -41,6 +44,27 @@ export class PageController {
       mailEnabled: mailEnabled(),
       reset: null,
     });
+  }
+
+  /**
+   * GET /get-app — Android browsers are sent here (views/partials/head.ejs): Call9me on Android
+   * is the app, not the website or PWA. Download it, or open it when already installed.
+   */
+  static getApp(req: Request, res: Response): void {
+    const app = androidApp();
+    // Same-site paths only (never "//other.site").
+    const next = typeof req.query.next === 'string' && /^\/(?!\/)[\w\-/?=&%.]*$/.test(req.query.next) ? req.query.next : '/';
+    if (!app) {
+      res.redirect(next);
+      return;
+    }
+    // Opens the installed app at the same page (e.g. a call link); without it, back to this page.
+    const host = req.hostname;
+    const fallback = encodeURIComponent(`https://${host}/get-app`);
+    const inApp = `${next}${next.includes('?') ? '&' : '?'}twa=1`;
+    const openUrl = `intent://${host}${inApp}#Intent;scheme=https;package=${app.packageName};S.browser_fallback_url=${fallback};end`;
+    res.set('Cache-Control', 'no-store');
+    res.render('get-app', { next, openUrl, versionName: app.versionName, sizeMb: (app.size / 1024 / 1024).toFixed(1) });
   }
 
   /** GET /reset-pin?token=… — the link from a "Forgot PIN?" email: choose a new PIN. */
