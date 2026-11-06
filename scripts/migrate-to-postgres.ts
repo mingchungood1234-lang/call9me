@@ -279,7 +279,8 @@ async function verify(client: pg.PoolClient, cipher: FieldCipher): Promise<void>
 function warnAboutTls(url: string): void {
   try {
     const u = new URL(url);
-    const local = ['localhost', '127.0.0.1', '::1', '[::1]'].includes(u.hostname);
+    // This machine, or a Docker service name like "postgres" (a private container network).
+    const local = ['localhost', '127.0.0.1', '::1', '[::1]'].includes(u.hostname) || !u.hostname.includes('.');
     const ssl = u.searchParams.get('sslmode') ?? process.env.PGSSLMODE;
     if (!local && (!ssl || ssl === 'disable' || ssl === 'allow' || ssl === 'prefer')) {
       console.warn('⚠ The database is not on this machine and the connection may not be encrypted.');
@@ -349,6 +350,25 @@ async function run(): Promise<void> {
   }
 }
 
+/** Turns "getaddrinfo EAI_AGAIN postgres" and friends into something actionable. */
+function explain(err: unknown): string {
+  const e = err as NodeJS.ErrnoException & { hostname?: string };
+  const host = e.hostname ?? (process.env.DATABASE_URL ? new URL(process.env.DATABASE_URL).hostname : '');
+  if (e.code === 'EAI_AGAIN' || e.code === 'ENOTFOUND') {
+    return (
+      `Cannot find the database host "${host}".\n` +
+      (host.includes('.')
+        ? '  Check the host name in DATABASE_URL.'
+        : `  With Docker: is there a "${host}" service in the same docker-compose.yml, and is it running?\n` +
+          '  Check with: docker compose ps   (start it with: docker compose up -d)')
+    );
+  }
+  if (e.code === 'ECONNREFUSED') return `The database at "${host}" refused the connection. Is PostgreSQL running and listening there?`;
+  if (e.code === '28P01') return 'Wrong database password: DATABASE_URL must match POSTGRES_PASSWORD.';
+  if (e.code === '3D000') return 'That database does not exist. Check the name at the end of DATABASE_URL.';
+  return err instanceof Error ? err.message : String(err);
+}
+
 run()
   .then(() => {
     for (const n of notes) console.log(`note: ${n}`);
@@ -358,7 +378,7 @@ run()
     }
   })
   .catch((err: unknown) => {
-    console.error(`\n✖ ${err instanceof Error ? err.message : String(err)}`);
+    console.error(`\n✖ ${explain(err)}`);
     console.error('Nothing was written (the transaction was rolled back).');
     process.exit(1);
   });

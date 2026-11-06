@@ -33,5 +33,31 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  # PostgreSQL for `node dist/scripts/migrate-to-postgres.js` (see README / .env.example).
+  # The app reaches it as host "postgres". No "ports:" on purpose: it is only reachable from
+  # containers in this compose project, never from the internet.
+  postgres:
+    image: postgres:17-alpine
+    container_name: call9me-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: call9me
+      POSTGRES_DB: call9me
+      # Set POSTGRES_PASSWORD in .env (the same password goes into DATABASE_URL).
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - call9me-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U call9me -d call9me"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
 volumes:
   call9me-data:
+  call9me-pg:
