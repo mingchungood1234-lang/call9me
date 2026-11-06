@@ -100,6 +100,13 @@
         <button type="button" id="qr-cancel" class="btn btn-ghost btn-block">Use ID and PIN instead</button>
       </div>
     </div>
+    <% if (locals.androidApp) { %>
+    <!-- Shown to Android browsers only (lib/androidApp.ts): the real app instead of the PWA -->
+    <a id="android-get" class="btn btn-secondary btn-block android-get" href="/download/android" download="Call9me.apk" hidden>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M17.6 9.48 19.44 6.3a.38.38 0 0 0-.66-.38l-1.87 3.23a11.6 11.6 0 0 0-9.82 0L5.22 5.92a.38.38 0 0 0-.66.38L6.4 9.48A10.8 10.8 0 0 0 1 18h22a10.8 10.8 0 0 0-5.4-8.52ZM7 15.25A1.25 1.25 0 1 1 8.25 14 1.25 1.25 0 0 1 7 15.25Zm10 0A1.25 1.25 0 1 1 18.25 14 1.25 1.25 0 0 1 17 15.25Z"/></svg>
+      Get the Android app
+    </a>
+    <% } %>
     <% } %>
 
     <% if (error) { %>

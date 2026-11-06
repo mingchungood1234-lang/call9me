@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The launcher shows the splash screen, then hands over to the browser engine. -->
+    <style name="Theme.Call9me" parent="android:Theme.Translucent.NoTitleBar" />
+</resources>

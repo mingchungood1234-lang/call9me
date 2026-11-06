@@ -1,0 +1,10 @@
+# Build output and IDE files
+.gradle/
+build/
+app/build/
+local.properties
+.idea/
+*.iml
+
+# The release signing key: private, never commit it (back it up somewhere safe instead).
+keystore/

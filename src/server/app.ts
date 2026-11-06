@@ -5,6 +5,7 @@ import { avatarModel } from './models/AvatarModel';
 import { emojiModel } from './models/EmojiModel';
 import { stickerModel } from './models/StickerModel';
 import { router } from './routes';
+import { androidApp } from './services/AndroidApp';
 import { appVersion } from './services/AppVersion';
 
 export function createApp(): express.Express {
@@ -55,6 +56,8 @@ export function createApp(): express.Express {
   // Views tag asset URLs and the page with the build version (cache busting + update checks).
   app.use((_req, res, next) => {
     res.locals.assetVersion = appVersion();
+    // Android visitors are offered the app (lib/androidApp.ts) when an APK has been built.
+    res.locals.androidApp = androidApp() !== null;
     next();
   });
   app.use(router);

@@ -68,6 +68,9 @@
         <% } %>
         <p class="menu-heading">Account</p>
         <button id="recovery-email-btn" class="menu-link" type="button" role="menuitem">Recovery email<small>Where "Forgot PIN?" sends your reset link</small></button>
+        <% if (locals.androidApp) { %>
+        <a id="android-get" class="menu-link" href="/download/android" download="Call9me.apk" role="menuitem" hidden>Get the Android app<small>Calls ring even when it's closed</small></a>
+        <% } %>
         <% if (googleEnabled) { %>
         <% if (googleEmail) { %>
         <p class="menu-note">Google: <strong><%= googleEmail %></strong></p>

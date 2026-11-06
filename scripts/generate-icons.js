@@ -1,4 +1,5 @@
-// Generates the PWA icons in public/icons as PNGs, with no image dependencies.
+// Generates the PWA icons in public/icons and the Android app icons in android/app/src/main/res
+// as PNGs, with no image dependencies.
 // Usage: npm run icons
 const fs = require('node:fs');
 const path = require('node:path');
@@ -124,4 +125,35 @@ fs.mkdirSync(OUT, { recursive: true });
 for (const [name, size, opts] of ICONS) {
   fs.writeFileSync(path.join(OUT, name), render(size, opts));
   console.log(`wrote public/icons/${name}`);
+}
+
+// ---- Android app (android/, a Trusted Web Activity): the same icon in Android's formats ----
+const RES = path.join(__dirname, '..', 'android', 'app', 'src', 'main', 'res');
+// Adaptive icons are 108dp layers of which ~72dp shows: 0.55 × 72/108 keeps the "9" the same size.
+const ADAPTIVE_GLYPH = 0.367;
+const ANDROID = [
+  // Legacy launcher icons (Android 7 and older launchers), square-ish and round.
+  ...[
+    ['mdpi', 48],
+    ['hdpi', 72],
+    ['xhdpi', 96],
+    ['xxhdpi', 144],
+    ['xxxhdpi', 192],
+  ].flatMap(([density, size]) => [
+    [`mipmap-${density}/ic_launcher.png`, size, { background: true, radius: 0.22, glyphScale: 0.55 }],
+    [`mipmap-${density}/ic_launcher_round.png`, size, { background: true, radius: 0.5, glyphScale: 0.5 }],
+  ]),
+  // Adaptive icon (Android 8+): full-bleed gradient + "9"; monochrome layer for themed icons (13+).
+  ['drawable-nodpi/ic_launcher_foreground.png', 432, { background: true, radius: 0, glyphScale: ADAPTIVE_GLYPH }],
+  ['drawable-nodpi/ic_launcher_monochrome.png', 432, { background: false, radius: 0, glyphScale: ADAPTIVE_GLYPH }],
+  // Status-bar notification icon (24dp, white on transparent).
+  ['drawable-xxxhdpi/ic_notification.png', 96, { background: false, radius: 0, glyphScale: 0.7 }],
+  // Splash screen while the app starts (128dp).
+  ['drawable-xxxhdpi/splash.png', 512, { background: true, radius: 0.22, glyphScale: 0.55 }],
+];
+for (const [name, size, opts] of ANDROID) {
+  const file = path.join(RES, name);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, render(size, opts));
+  console.log(`wrote android/app/src/main/res/${name}`);
 }

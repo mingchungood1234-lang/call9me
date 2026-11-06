@@ -1,0 +1,76 @@
+// Call9me for Android: a Trusted Web Activity (TWA). The app opens the Call9me website
+// full screen in the user's Chrome engine, so calls (WebRTC), push notifications that ring a
+// closed app, Google sign-in and every website update work exactly as on the web, with no
+// browser bar. Build it with `npm run android:build` (see android/README.md).
+plugins {
+    id 'com.android.application'
+}
+
+// The site the app opens, e.g. `-PtwaHost=call.example.com` (hostname only, HTTPS is implied).
+def twaHost = (findProperty('twaHost') ?: System.getenv('TWA_HOST') ?: 'call.example.com').toString()
+def appId = (findProperty('applicationId') ?: 'com.call9me.app').toString()
+
+// Digital Asset Links: the app claims the site; the site's /.well-known/assetlinks.json claims
+// the app back (with this app's signing certificate). Both together hide the browser bar.
+def assetStatements = '[{\\"relation\\": [\\"delegate_permission/common.handle_all_urls\\"], ' +
+        '\\"target\\": {\\"namespace\\": \\"web\\", \\"site\\": \\"https://' + twaHost + '\\"}}]'
+
+// Release signing key, created on the first `npm run android:build` (keep it safe: updates
+// must be signed with the same key, or users have to uninstall first).
+def keystorePropsFile = rootProject.file('keystore/keystore.properties')
+def keystoreProps = new Properties()
+if (keystorePropsFile.exists()) {
+    keystorePropsFile.withInputStream { keystoreProps.load(it) }
+}
+
+android {
+    namespace 'com.call9me.app'
+    compileSdk 36
+
+    defaultConfig {
+        applicationId appId
+        minSdk 24
+        targetSdk 36
+        versionCode((findProperty('versionCode') ?: '1').toString().toInteger())
+        versionName((findProperty('versionName') ?: '1.0.0').toString())
+
+        manifestPlaceholders = [
+                hostName         : twaHost,
+                launchUrl        : "https://${twaHost}/".toString(),
+                providerAuthority: "${appId}.fileprovider".toString(),
+        ]
+        resValue 'string', 'assetStatements', assetStatements
+        resValue 'string', 'providerAuthority', "${appId}.fileprovider".toString()
+    }
+
+    signingConfigs {
+        release {
+            if (keystorePropsFile.exists()) {
+                storeFile rootProject.file("keystore/${keystoreProps['storeFile']}")
+                storePassword keystoreProps['storePassword']
+                keyAlias keystoreProps['keyAlias']
+                keyPassword keystoreProps['keyPassword']
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig keystorePropsFile.exists() ? signingConfigs.release : signingConfigs.debug
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    buildFeatures {
+        resValues true
+    }
+}
+
+dependencies {
+    implementation 'com.google.androidbrowserhelper:androidbrowserhelper:2.7.4'
+}

@@ -49,6 +49,7 @@ The app listens on `127.0.0.1:3000`, so put an HTTPS reverse proxy in front of i
   - In the installed app, a banner asks users to turn on notifications if they haven't yet.
   - **No zooming in the installed app.** Pinch, double-tap and Ctrl/⌘ + zoom are disabled when Call9me runs as an installed app. In a normal browser tab, zoom still works for accessibility.
 - **Phone layout.** On phones the app switches to a bottom tab bar (People / Call / Chat), with large touch targets, safe-area insets for notched screens, and a bottom-sheet incoming-call dialog. A landscape layout gives the video more room.
+- **Android app.** Android visitors get a "Get the Android app" button (and a card in place of the PWA install hint) that downloads a real APK from `/download/android`. The app opens the site full screen, with no browser bar, so every site update reaches it right away. Calls, push notifications that ring a closed app, and Google sign-in all work as on the web. Build it with `npm run android:build`; see [android/README.md](android/README.md).
 - **Light and dark mode.** The app follows the system setting by default, and the toggle in the top bar remembers your choice.
 
 ## Structure
@@ -116,6 +117,7 @@ The username and password must match a `user=call9me:YourStrongPassword` line in
 | `DATA_DIR`              | `./data`                   | Where accounts, push subscriptions and VAPID keys are stored. |
 | `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` | generated into `data/vapid.json` | Keep these stable: if they change, every existing push subscription stops working. |
 | `VAPID_SUBJECT`         | `mailto:admin@call9me.local` | Set this to your own contact address. |
+| `ANDROID_CERT_SHA256`   | none                       | Extra signing-certificate fingerprints (comma-separated `AA:BB:…`) for `/.well-known/assetlinks.json`, e.g. Google Play's app signing key. The APK's own fingerprint is added by `npm run android:build`. |
 
 ## Notes
 

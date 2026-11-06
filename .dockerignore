@@ -13,3 +13,6 @@ README.md
 docker-compose.yml
 Dockerfile
 .dockerignore
+
+# The Android app's source and signing key (the built APK ships in public/downloads)
+android

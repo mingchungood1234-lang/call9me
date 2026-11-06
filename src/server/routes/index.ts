@@ -10,6 +10,7 @@ import { PairingController } from '../controllers/PairingController';
 import { PinResetController } from '../controllers/PinResetController';
 import { PushController } from '../controllers/PushController';
 import { UserController } from '../controllers/UserController';
+import { androidApp, assetLinks } from '../services/AndroidApp';
 import { appVersion } from '../services/AppVersion';
 
 export const router = Router();
@@ -24,6 +25,24 @@ router.get('/reset-pin', PageController.resetPin);
 router.get('/sw.js', (_req, res) => {
   res.set('Cache-Control', 'no-cache');
   res.sendFile(path.join(config.rootDir, 'public', 'js', 'sw.js'));
+});
+
+// The Android app: the APK download, and the Digital Asset Links that let it open the site
+// full screen (no browser bar). Both come from `npm run android:build` (see android/README.md).
+router.get('/download/android', (_req, res) => {
+  const app = androidApp();
+  if (!app) {
+    res.status(404).send('The Android app is not available yet.');
+    return;
+  }
+  res.set('Cache-Control', 'no-cache');
+  res.set('X-Content-Type-Options', 'nosniff');
+  res.type('application/vnd.android.package-archive');
+  res.download(app.apkPath, 'Call9me.apk');
+});
+router.get('/.well-known/assetlinks.json', (_req, res) => {
+  res.set('Cache-Control', 'public, max-age=3600');
+  res.json(assetLinks());
 });
 
 // "Continue with Google" (only works when GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET are set)

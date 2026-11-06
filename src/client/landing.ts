@@ -1,6 +1,7 @@
 import type { AvailabilityResponse, LoginResponse, PairStartResponse, PairStatusResponse } from '../shared/types';
 import { isValidPin, isValidUserId, PIN_RULES, USER_ID_RULES } from '../shared/validation';
 import { $, autoFocus } from './lib/dom';
+import { androidDownloadUrl } from './lib/androidApp';
 import { registerServiceWorker } from './lib/push';
 import { formatPairCode, renderQr } from './lib/qr';
 import { showInstallHint } from './lib/installHint';
@@ -399,6 +400,9 @@ if (document.querySelector('#qr-btn')) setupQrSignIn();
 
 void registerServiceWorker();
 showInstallHint();
+// Android browser: a lasting "Get the Android app" button (the hint can be dismissed).
+const androidGet = document.getElementById('android-get');
+if (androidGet && androidDownloadUrl()) androidGet.hidden = false;
 
 // Website/PWA start page: pick up new deploys, but never wipe what the user is typing.
 new UpdateWatcher({

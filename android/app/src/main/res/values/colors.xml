@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Match the site's theme-color (views/partials/head.ejs) in light and dark mode. -->
+    <color name="barLight">#F3F5FB</color>
+    <color name="barDark">#0B0E1A</color>
+    <color name="splashBackground">#0F1220</color>
+    <!-- Middle of the icon gradient (#6c7cff → #a855f7). -->
+    <color name="iconBackground">#8A68FB</color>
+</resources>

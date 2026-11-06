@@ -1,3 +1,4 @@
+import { androidDownloadUrl } from './androidApp';
 import { el } from './dom';
 import { isStandalone } from './push';
 
@@ -87,8 +88,9 @@ export interface InstallHintOptions {
 /**
  * Invites the user to add Call9me to their home screen. Shown when the site runs in a normal
  * browser tab on a phone (with step-by-step instructions), or anywhere the browser offers a
- * real install prompt (one-tap "Install"). Never shown inside the installed app, and "Not now"
- * keeps it away for a week.
+ * real install prompt (one-tap "Install"). On Android, when the server has the Android app
+ * (`npm run android:build`), it offers that download instead. Never shown inside the installed
+ * app, and "Not now" keeps it away for a week.
  */
 export function showInstallHint(options: InstallHintOptions = {}): void {
   if (isStandalone() || snoozed()) return;
@@ -96,6 +98,13 @@ export function showInstallHint(options: InstallHintOptions = {}): void {
   let shown = false;
   const show = () => {
     if (shown || isStandalone() || document.querySelector('.install-hint')) return;
+    // Android, when the server offers the app: download the real app instead of installing the PWA.
+    const apkUrl = androidDownloadUrl();
+    if (apkUrl) {
+      shown = true;
+      renderAndroid(apkUrl);
+      return;
+    }
     // Desktop: only when the browser can actually install it. Phones: always (manual steps as fallback).
     if (!deferredPrompt && !isMobile()) return;
     shown = true;
@@ -106,6 +115,68 @@ export function showInstallHint(options: InstallHintOptions = {}): void {
     show();
     if (!shown) promptListeners.push(show); // install prompt may still arrive
   }, options.delayMs ?? 2500);
+}
+
+/** How to install the downloaded APK (Android asks once to allow installs from the browser). */
+function androidSteps(): HTMLElement {
+  const list = el('ol', { className: 'install-hint-steps' });
+  const first = el('li', { text: 'Open ' });
+  first.append(el('strong', { text: 'Call9me.apk' }), document.createTextNode(' when the download finishes'));
+  const second = el('li', { text: 'If asked, allow your browser to ' });
+  second.append(el('strong', { text: 'install unknown apps' }));
+  const third = el('li', { text: 'Tap ' });
+  third.append(el('strong', { text: 'Install' }), document.createTextNode(', then open Call9me'));
+  list.append(first, second, third);
+  return list;
+}
+
+/** Android variant: a one-tap download of the Android app (android/, built into the site). */
+function renderAndroid(apkUrl: string): void {
+  const card = el('aside', { className: 'install-hint' });
+  card.setAttribute('role', 'dialog');
+  card.setAttribute('aria-labelledby', 'install-hint-title');
+
+  const close = () => {
+    card.classList.add('is-leaving');
+    setTimeout(() => card.remove(), 250);
+  };
+
+  const later = el('button', { className: 'btn btn-ghost btn-small', text: 'Not now' });
+  later.type = 'button';
+  later.addEventListener('click', () => {
+    snooze();
+    close();
+  });
+
+  const download = el('a', { className: 'btn btn-primary btn-small install-hint-go', text: 'Download app' });
+  download.href = apkUrl;
+  download.download = 'Call9me.apk';
+
+  const body = el('div', { className: 'install-hint-body' });
+  const title = el('h2', { className: 'install-hint-title', text: '📱 Get the Call9me app for Android' });
+  title.id = 'install-hint-title';
+  const text = el('p', {
+    className: 'install-hint-text',
+    text: 'One-tap calls that ring even when the app is closed, instant notifications and a sleek full-screen experience.',
+  });
+  body.append(title, text);
+  const actions = el('div', { className: 'install-hint-actions' }, [later, download]);
+
+  download.addEventListener('click', () => {
+    // The download has started: show how to install it, and don't offer it again for a while.
+    snooze();
+    text.textContent = 'Downloading… then:';
+    body.append(androidSteps());
+    const gotIt = el('button', { className: 'btn btn-primary btn-small install-hint-ok', text: 'Got it' });
+    gotIt.type = 'button';
+    gotIt.addEventListener('click', close);
+    actions.replaceChildren(gotIt);
+  });
+
+  const icon = el('div', { className: 'brand-mark install-hint-icon', text: '9' });
+  icon.setAttribute('aria-hidden', 'true');
+  card.append(el('div', { className: 'install-hint-head' }, [icon, body]), actions);
+  document.body.append(card);
 }
 
 function render(): void {

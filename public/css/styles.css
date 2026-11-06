@@ -377,6 +377,8 @@ body.landing {
 
 /* Sign in with a QR code */
 .qr-signin { margin-top: 12px; }
+.android-get { margin-top: 12px; }
+.android-get svg { width: 20px; height: 20px; color: #3ddc84; }
 .qr-panel { display: grid; gap: 8px; justify-items: center; text-align: center; }
 .qr-panel[hidden] { display: none; }
 /* Always dark on white: cameras can't read a dark-mode code. */

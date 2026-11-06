@@ -16,6 +16,7 @@ import { ShareDialog } from './lib/ShareDialog';
 import { $, avatar, avatarUrlOf, el, formatDuration, hueFor, onAvatarsChange, paintAvatar, setAvatarUrls, toast } from './lib/dom';
 import { squareImage } from './lib/images';
 import { MobileTabs } from './lib/MobileTabs';
+import { androidDownloadUrl } from './lib/androidApp';
 import { showInstallHint } from './lib/installHint';
 import { isStandalone, PushNotifications, type PushStatus } from './lib/push';
 import { NOT_CONNECTED, withTimeout, type AppSocket } from './lib/socket';
@@ -136,6 +137,9 @@ socket.on('app:version', ({ version }) => updates.report(version));
 
 // In a browser tab: invite the user to add Call9me to their home screen (calls, notifications).
 showInstallHint({ delayMs: 6000 });
+// Android browser tab: the profile menu also offers the Android app.
+const androidGet = document.getElementById('android-get');
+if (androidGet && androidDownloadUrl()) androidGet.hidden = false;
 let takenRetries = 0;
 let hasConnected = false;
 

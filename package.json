@@ -11,6 +11,7 @@
     "build": "npm run typecheck && npm run build:client && npm run build:sw && npm run build:server && npm run build:scripts",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.client.json && tsc -p tsconfig.sw.json",
     "icons": "node scripts/generate-icons.js",
+    "android:build": "node scripts/build-android.js",
     "start": "node dist/server/server.js",
     "dev": "concurrently -k -n server,client,sw -c blue,magenta,green \"tsx watch src/server/server.ts\" \"npm run build:client -- --watch=forever\" \"npm run build:sw -- --watch=forever\"",
     "db:migrate": "tsx scripts/migrate-to-postgres.ts",
