@@ -8,12 +8,14 @@
     "build:client": "esbuild src/client/landing.ts src/client/app.ts src/client/admin.ts --bundle --splitting --format=esm --target=es2020 --outdir=public/js --chunk-names=chunks/[name]-[hash] --sourcemap",
     "build:sw": "esbuild src/client/sw.ts --bundle --format=iife --target=es2020 --outfile=public/js/sw.js",
     "build:server": "tsc -p tsconfig.json",
-    "build": "npm run typecheck && npm run build:client && npm run build:sw && npm run build:server",
+    "build": "npm run typecheck && npm run build:client && npm run build:sw && npm run build:server && npm run build:scripts",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.client.json && tsc -p tsconfig.sw.json",
     "icons": "node scripts/generate-icons.js",
     "start": "node dist/server/server.js",
     "dev": "concurrently -k -n server,client,sw -c blue,magenta,green \"tsx watch src/server/server.ts\" \"npm run build:client -- --watch=forever\" \"npm run build:sw -- --watch=forever\"",
-    "db:migrate": "tsx scripts/migrate-to-postgres.ts"
+    "db:migrate": "tsx scripts/migrate-to-postgres.ts",
+    "build:scripts": "esbuild scripts/migrate-to-postgres.ts --bundle --platform=node --target=node20 --format=cjs --external:pg --outfile=dist/scripts/migrate-to-postgres.js && node -e \"require('fs').copyFileSync('scripts/postgres-schema.sql','dist/scripts/postgres-schema.sql')\"",
+    "db:migrate:prod": "node dist/scripts/migrate-to-postgres.js"
   },
   "engines": {
     "node": ">=18"

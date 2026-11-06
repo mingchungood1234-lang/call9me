@@ -19,7 +19,12 @@ import path from 'node:path';
 import pg from 'pg';
 import { FieldCipher } from '../src/server/db/crypto';
 
-const ROOT = path.join(__dirname, '..');
+// Run from the project root (npm scripts, and /app inside the Docker image).
+const ROOT = process.cwd();
+/** Next to this file (source: scripts/, compiled: dist/scripts/), else the project's scripts/. */
+const SCHEMA_FILE = [path.join(__dirname, 'postgres-schema.sql'), path.join(ROOT, 'scripts', 'postgres-schema.sql')].find((f) =>
+  fs.existsSync(f),
+);
 const args = process.argv.slice(2);
 const flag = (name: string) => args.includes(`--${name}`);
 const option = (name: string) => {
@@ -310,7 +315,8 @@ async function run(): Promise<void> {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    await client.query(fs.readFileSync(path.join(__dirname, 'postgres-schema.sql'), 'utf8'));
+    if (!SCHEMA_FILE) throw new Error('postgres-schema.sql not found next to the script');
+    await client.query(fs.readFileSync(SCHEMA_FILE, 'utf8'));
 
     // Never mix data encrypted with two different keys in one database.
     const fp = cipher.fingerprint();
