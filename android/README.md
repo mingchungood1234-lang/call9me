@@ -32,7 +32,7 @@ Commit `public/downloads/` and deploy as usual (`docker compose up -d --build`).
 - A card in place of the "Add to Home Screen" hint.
 - **Get the Android app** in the profile menu.
 
-None of these show inside the app itself.
+On Android the site never suggests the PWA ("Add to Home Screen") once an APK exists. The card comes back on every visit, and "Not now" hides it for that visit only. People who already added the PWA to their home screen get a **Switch to the Call9me Android app** card each time they open it, with a step for removing the old icon. None of this shows inside the app itself.
 
 Check `https://your-domain/.well-known/assetlinks.json` after deploying. If it returns `[]`, Chrome shows a browser bar at the top of the app.
 

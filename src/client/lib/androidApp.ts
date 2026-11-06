@@ -7,16 +7,16 @@ const IN_APP_KEY = 'call9me:inAndroidApp';
 try {
   if (document.referrer.startsWith('android-app://')) sessionStorage.setItem(IN_APP_KEY, '1');
 } catch {
-  /* storage blocked: the standalone check below still covers the app */
+  /* storage blocked: inAndroidApp() still sees the referrer on the first page */
 }
 
 export function isAndroid(): boolean {
   return /android/i.test(navigator.userAgent);
 }
 
-/** True inside the installed Android app (or the installed PWA, which needs no download either). */
-export function inInstalledApp(): boolean {
-  if (isStandalone()) return true;
+/** True inside the installed Android app (not the PWA, which shares the browser's storage). */
+export function inAndroidApp(): boolean {
+  if (document.referrer.startsWith('android-app://')) return true;
   try {
     return sessionStorage.getItem(IN_APP_KEY) === '1';
   } catch {
@@ -24,11 +24,16 @@ export function inInstalledApp(): boolean {
   }
 }
 
+/** The home-screen PWA on Android: these users are asked to switch to the real app. */
+export function inAndroidPwa(): boolean {
+  return isAndroid() && isStandalone() && !inAndroidApp();
+}
+
 /**
- * Where to download the Android app, when this is an Android browser tab and the server has an
- * APK to offer (`<meta name="android-app">`, see views/partials/head.ejs); otherwise null.
+ * Where to download the Android app: on Android (browser tab or the PWA, never the app itself)
+ * when the server has an APK to offer (`<meta name="android-app">`, views/partials/head.ejs).
  */
 export function androidDownloadUrl(): string | null {
-  if (!isAndroid() || inInstalledApp()) return null;
+  if (!isAndroid() || inAndroidApp()) return null;
   return document.querySelector<HTMLMetaElement>('meta[name="android-app"]')?.content || null;
 }

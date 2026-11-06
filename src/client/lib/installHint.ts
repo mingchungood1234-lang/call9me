@@ -1,4 +1,4 @@
-import { androidDownloadUrl } from './androidApp';
+import { androidDownloadUrl, inAndroidPwa } from './androidApp';
 import { el } from './dom';
 import { isStandalone } from './push';
 
@@ -88,23 +88,30 @@ export interface InstallHintOptions {
 /**
  * Invites the user to add Call9me to their home screen. Shown when the site runs in a normal
  * browser tab on a phone (with step-by-step instructions), or anywhere the browser offers a
- * real install prompt (one-tap "Install"). On Android, when the server has the Android app
- * (`npm run android:build`), it offers that download instead. Never shown inside the installed
- * app, and "Not now" keeps it away for a week.
+ * real install prompt (one-tap "Install"), and "Not now" keeps it away for a week.
+ *
+ * On Android, when the server has the Android app (`npm run android:build`), it offers that
+ * download instead, never the PWA: on every visit in the browser, and inside an installed PWA
+ * (to switch over). There "Not now" lasts one visit. Never shown inside the Android app.
  */
 export function showInstallHint(options: InstallHintOptions = {}): void {
+  // Android, when the server offers the app: always the real app, never the PWA. Offered on
+  // every visit (in a browser tab, or in the PWA to switch over); "Not now" lasts one visit.
+  const apkUrl = androidDownloadUrl();
+  if (apkUrl) {
+    if (!androidDismissed()) {
+      setTimeout(() => {
+        if (!document.querySelector('.install-hint')) renderAndroid(apkUrl);
+      }, options.delayMs ?? 2500);
+    }
+    return;
+  }
+
   if (isStandalone() || snoozed()) return;
 
   let shown = false;
   const show = () => {
     if (shown || isStandalone() || document.querySelector('.install-hint')) return;
-    // Android, when the server offers the app: download the real app instead of installing the PWA.
-    const apkUrl = androidDownloadUrl();
-    if (apkUrl) {
-      shown = true;
-      renderAndroid(apkUrl);
-      return;
-    }
     // Desktop: only when the browser can actually install it. Phones: always (manual steps as fallback).
     if (!deferredPrompt && !isMobile()) return;
     shown = true;
@@ -117,6 +124,25 @@ export function showInstallHint(options: InstallHintOptions = {}): void {
   }, options.delayMs ?? 2500);
 }
 
+const ANDROID_DISMISSED_KEY = 'call9me:androidHintDismissed';
+
+/** "Not now" on the Android card hides it for this visit (browser session) only. */
+function androidDismissed(): boolean {
+  try {
+    return sessionStorage.getItem(ANDROID_DISMISSED_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function dismissAndroid(): void {
+  try {
+    sessionStorage.setItem(ANDROID_DISMISSED_KEY, '1');
+  } catch {
+    /* hidden for this page only */
+  }
+}
+
 /** How to install the downloaded APK (Android asks once to allow installs from the browser). */
 function androidSteps(): HTMLElement {
   const list = el('ol', { className: 'install-hint-steps' });
@@ -127,6 +153,12 @@ function androidSteps(): HTMLElement {
   const third = el('li', { text: 'Tap ' });
   third.append(el('strong', { text: 'Install' }), document.createTextNode(', then open Call9me'));
   list.append(first, second, third);
+  if (inAndroidPwa()) {
+    // Two Call9me icons would be confusing (and both would ring): retire the home-screen version.
+    const fourth = el('li', { text: 'Remove this old home-screen version: long-press its icon → ' });
+    fourth.append(el('strong', { text: 'Uninstall' }));
+    list.append(fourth);
+  }
   return list;
 }
 
@@ -144,7 +176,7 @@ function renderAndroid(apkUrl: string): void {
   const later = el('button', { className: 'btn btn-ghost btn-small', text: 'Not now' });
   later.type = 'button';
   later.addEventListener('click', () => {
-    snooze();
+    dismissAndroid();
     close();
   });
 
@@ -153,18 +185,24 @@ function renderAndroid(apkUrl: string): void {
   download.download = 'Call9me.apk';
 
   const body = el('div', { className: 'install-hint-body' });
-  const title = el('h2', { className: 'install-hint-title', text: '📱 Get the Call9me app for Android' });
+  const pwa = inAndroidPwa();
+  const title = el('h2', {
+    className: 'install-hint-title',
+    text: pwa ? '📱 Switch to the Call9me Android app' : '📱 Get the Call9me app for Android',
+  });
   title.id = 'install-hint-title';
   const text = el('p', {
     className: 'install-hint-text',
-    text: 'One-tap calls that ring even when the app is closed, instant notifications and a sleek full-screen experience.',
+    text: pwa
+      ? 'This home-screen version is being replaced by a real Android app: install it for the best calls and notifications.'
+      : 'Use the real Android app instead of the browser: one-tap calls that ring even when it is closed, instant notifications and a full-screen experience.',
   });
   body.append(title, text);
   const actions = el('div', { className: 'install-hint-actions' }, [later, download]);
 
   download.addEventListener('click', () => {
-    // The download has started: show how to install it, and don't offer it again for a while.
-    snooze();
+    // The download has started: show how to install it, and don't offer it again this visit.
+    dismissAndroid();
     text.textContent = 'Downloading… then:';
     body.append(androidSteps());
     const gotIt = el('button', { className: 'btn btn-primary btn-small install-hint-ok', text: 'Got it' });
