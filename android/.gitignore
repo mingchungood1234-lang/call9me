@@ -8,3 +8,6 @@ local.properties
 
 # The release signing key: private, never commit it (back it up somewhere safe instead).
 keystore/
+
+# Front end shipped inside the APK (copied by npm run android:build)
+app/src/main/assets/web/

@@ -17,9 +17,12 @@ import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.webkit.ServiceWorkerClientCompat
+import androidx.webkit.ServiceWorkerControllerCompat
 import androidx.webkit.WebSettingsCompat
 import androidx.webkit.WebViewFeature
 import org.json.JSONObject
@@ -169,6 +172,16 @@ object WebViewHolder {
             setSupportMultipleWindows(false)
             userAgentString = "$userAgentString ${Site.userAgentTag}"
         }
+        LocalUi.userAgent = view.settings.userAgentString
+        // Requests a service worker makes (if the site registered one) are served locally too.
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.SERVICE_WORKER_BASIC_USAGE) &&
+            WebViewFeature.isFeatureSupported(WebViewFeature.SERVICE_WORKER_SHOULD_INTERCEPT_REQUEST)
+        ) {
+            ServiceWorkerControllerCompat.getInstance().setServiceWorkerClient(object : ServiceWorkerClientCompat() {
+                override fun shouldInterceptRequest(request: WebResourceRequest): WebResourceResponse? =
+                    LocalUi.intercept(request, mainFrame = false)
+            })
+        }
         // The page has its own light/dark themes: never let the WebView darken it.
         if (WebViewFeature.isFeatureSupported(WebViewFeature.ALGORITHMIC_DARKENING)) {
             WebSettingsCompat.setAlgorithmicDarkeningAllowed(view.settings, false)
@@ -203,6 +216,16 @@ object WebViewHolder {
             if (uri.scheme == "blob" || uri.scheme == "data" || uri.scheme == "about") return false
             activity?.openExternal(uri)
             return true
+        }
+
+        /** The UI's own files come from the phone (see LocalUi): no blank screen while loading. */
+        override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? =
+            LocalUi.intercept(request, request.isForMainFrame)
+
+        /** The page has painted: the splash screen can go (no need to wait for every picture). */
+        override fun onPageCommitVisible(view: WebView, url: String?) {
+            firstPageShown = true
+            activity?.onPageVisible()
         }
 
         override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) {

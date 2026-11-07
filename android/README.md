@@ -8,6 +8,7 @@ The screens are the Call9me website shown inside the app, so the design matches 
 |---|---|
 | **Calls ring with the app closed**: a full-screen call screen (over the lock screen too) with Answer and Decline, the phone's ringtone and vibration | Firebase Cloud Messaging (FCM). See [Set up Firebase](#set-up-firebase) below. |
 | **Calls continue in the background**: app minimised, screen off, or swiped from recents | A foreground service with an "ongoing call" notification and a **Hang up** button. |
+| **Opens instantly, no blank screen**: the site's CSS and JavaScript ship inside the APK, fonts and the signed-in app page are kept on the phone and shown at once, then refreshed from the server in the background | `LocalUi.kt`. A newer deploy is fetched once and then served locally too (asset URLs carry `?v=<build>`), so deploys still reach the app straight away. |
 | **Native look**: splash screen, edge-to-edge system bars that follow the page's light/dark theme, back button, no zoom | `MainActivity` |
 | Camera, microphone, notification and file permissions | Android's own prompts |
 | "Continue with Google" | Google blocks sign-in inside apps. It opens in a Chrome Custom Tab and hands the session back to the app. |
@@ -24,6 +25,7 @@ When the app is in the background and not in a call, it disconnects from the ser
 |---|---|
 | `MainActivity.kt` | The screen: hosts the site, permissions, theme, links, Answer |
 | `NativeCall.kt`, `CallActivity.kt`, `TileGrid.kt`, `AudioRouter.kt` | Native calls: media engine, call screen, video layout, audio routing |
+| `LocalUi.kt` | Serves the UI from the phone: bundled CSS/JS (`assets/web/`, made by `npm run android:build`), stored fonts and app page |
 | `WebViewHolder.kt` | Keeps the page (and the call) alive when the screen goes away; the JavaScript bridge `window.Call9meAndroid` |
 | `CallService.kt` | Foreground service for background calls |
 | `PushService.kt`, `Push.kt` | FCM: incoming calls, call cancelled, messages, token |

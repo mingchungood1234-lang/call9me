@@ -7,6 +7,7 @@
 // The first build creates the signing key in android/keystore/: back it up. Updates must be
 // signed with the same key, and /.well-known/assetlinks.json publishes its fingerprint.
 const { spawnSync } = require('node:child_process');
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -52,6 +53,55 @@ function run(cmd, args) {
   if (result.status !== 0) fail(`${cmd} ${args[0]} failed (exit ${result.status}).`);
 }
 
+/**
+ * Puts the site's front end (CSS and JavaScript) inside the APK, so the app shows its UI from the
+ * phone instead of a blank screen while the network loads it (android/…/LocalUi.kt). version.txt
+ * is the same fingerprint the server puts in "?v=" (src/server/services/AppVersion.ts): the app
+ * only uses these copies while they match the deployed build, and fetches a newer one otherwise.
+ */
+function bundleFrontEnd() {
+  console.log('Building the front end to ship inside the app...');
+  const result = spawnSync('npm run build:client', { stdio: 'inherit', cwd: ROOT, shell: true });
+  if (result.status !== 0) fail('npm run build:client failed.');
+
+  const pub = path.join(ROOT, 'public');
+  const out = path.join(ANDROID, 'app', 'src', 'main', 'assets', 'web');
+  fs.rmSync(out, { recursive: true, force: true });
+  const copy = (rel) => {
+    const target = path.join(out, rel);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.copyFileSync(path.join(pub, rel), target);
+  };
+
+  copy('css/styles.css');
+  // The entry points, and every chunk they import (not stale chunks from older builds).
+  const pending = ['js/app.js', 'js/landing.js', 'js/admin.js'];
+  const seen = new Set();
+  while (pending.length) {
+    const rel = pending.pop();
+    if (seen.has(rel)) continue;
+    seen.add(rel);
+    copy(rel);
+    const source = fs.readFileSync(path.join(pub, rel), 'utf8');
+    for (const match of source.matchAll(/["'](\.\.?\/[\w./-]+\.js)["']/g)) {
+      const next = path.posix.normalize(path.posix.join(path.posix.dirname(rel), match[1]));
+      if (next.startsWith('js/') && fs.existsSync(path.join(pub, next))) pending.push(next);
+    }
+  }
+
+  const hash = crypto.createHash('sha1');
+  for (const rel of ['js/app.js', 'js/landing.js', 'js/sw.js', 'css/styles.css']) {
+    try {
+      hash.update(fs.readFileSync(path.join(pub, rel)));
+    } catch {
+      hash.update('-');
+    }
+  }
+  const version = process.env.APP_VERSION || hash.digest('hex').slice(0, 12);
+  fs.writeFileSync(path.join(out, 'version.txt'), `${version}\n`);
+  console.log(`  ${seen.size + 1} files, front-end build ${version}`);
+}
+
 const host = hostArg();
 const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
 const now = new Date();
@@ -64,6 +114,7 @@ if (spawnSync('docker', ['info'], { stdio: 'ignore' }).status !== 0) {
 }
 
 console.log(`Building the Call9me Android app for https://${host}/ (version ${versionName}, code ${versionCode})`);
+bundleFrontEnd();
 console.log('Preparing the build image (slow the first time: it downloads the Android SDK)...');
 run('docker', ['build', '-t', IMAGE, path.join(ANDROID, 'builder')]);
 

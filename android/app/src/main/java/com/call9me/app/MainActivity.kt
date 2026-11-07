@@ -147,7 +147,7 @@ class MainActivity : AppCompatActivity() {
             }
         })
 
-        if (!handleIntent(intent) && WebViewHolder.webView?.url == null) WebViewHolder.load("/")
+        if (!handleIntent(intent) && WebViewHolder.webView?.url == null) WebViewHolder.load(LocalUi.startPath())
         if (WebViewHolder.inCall) onCallStateChanged(true)
     }
 
@@ -304,6 +304,11 @@ class MainActivity : AppCompatActivity() {
     fun onPageShown() {
         keepSplash = false
         offline.visibility = View.GONE
+    }
+
+    /** The page has painted (before its pictures finish): drop the splash screen. */
+    fun onPageVisible() {
+        keepSplash = false
     }
 
     fun showOffline() {
