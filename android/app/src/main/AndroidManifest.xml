@@ -58,6 +58,17 @@
             </intent-filter>
         </activity>
 
+        <!-- The native call screen: rotates without restarting (the video keeps going), and
+             shrinks to picture-in-picture when you leave the app during a video call. -->
+        <activity
+            android:name=".CallActivity"
+            android:exported="false"
+            android:launchMode="singleTop"
+            android:theme="@style/Theme.Call9me.Call"
+            android:supportsPictureInPicture="true"
+            android:resizeableActivity="true"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation|uiMode|density" />
+
         <!-- Full-screen incoming call (also over the lock screen). -->
         <activity
             android:name=".IncomingCallActivity"

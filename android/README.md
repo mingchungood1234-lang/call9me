@@ -12,6 +12,7 @@ The screens are the Call9me website shown inside the app, so the design matches 
 | Camera, microphone, notification and file permissions | Android's own prompts |
 | "Continue with Google" | Google blocks sign-in inside apps. It opens in a Chrome Custom Tab and hands the session back to the app. |
 | Chat messages, missed calls and friend requests as notifications | FCM |
+| **Native calls**: Android's own WebRTC, camera, microphone and speaker/earpiece/headset routing, on a native call screen that fits portrait and landscape (grid, spotlight a tile, your camera floating in one-to-one calls), picture-in-picture when you leave the app, "Back to chat" while the call continues | `NativeCall.kt` (media, the same peer rules as `CallManager.ts`, so browsers can't tell the difference), `CallActivity.kt` + `TileGrid.kt` (screen), `AudioRouter.kt`. The page keeps the call's logic and the socket; `src/client/lib/nativeCall.ts` relays signaling. |
 | **Screen sharing**: Android's own "Start sharing?" prompt (whole screen or one app), keeps going while you use other apps, **Stop sharing** in the call notification | `ScreenShare.kt` (MediaProjection) sends frames to the page, which makes them a video track (`src/client/lib/nativeScreen.ts`). The WebView alone can't share the screen. |
 | **Updates itself**: when the site has a newer APK, the app offers **Update** and installs it in place | `Updater.kt` checks `/download/android/version` when the app opens (at most hourly, never during a call). Android asks the user once to allow installs from Call9me, then confirms each update. |
 
@@ -22,6 +23,7 @@ When the app is in the background and not in a call, it disconnects from the ser
 | File | Purpose |
 |---|---|
 | `MainActivity.kt` | The screen: hosts the site, permissions, theme, links, Answer |
+| `NativeCall.kt`, `CallActivity.kt`, `TileGrid.kt`, `AudioRouter.kt` | Native calls: media engine, call screen, video layout, audio routing |
 | `WebViewHolder.kt` | Keeps the page (and the call) alive when the screen goes away; the JavaScript bridge `window.Call9meAndroid` |
 | `CallService.kt` | Foreground service for background calls |
 | `PushService.kt`, `Push.kt` | FCM: incoming calls, call cancelled, messages, token |

@@ -25,6 +25,11 @@ export interface AndroidBridge {
   /** Shows Android's "Start sharing?" prompt; answers with call9meNative.screenShare(status). */
   startScreenShare?(): void;
   stopScreenShare?(): void;
+  // Native calls (src/client/lib/nativeCall.ts). Missing in app versions before them.
+  /** The app runs calls natively (its own WebRTC and call screen). */
+  nativeCallsSupported?(): boolean;
+  /** A message for the native call (JSON, see nativeCall.ts). */
+  callMedia?(json: string): void;
 }
 
 /** Where a native screen share stands: started, refused at the prompt, failed, or stopped. */
@@ -42,6 +47,8 @@ export interface NativeCommands {
   pushResult(status: string, token: string): void;
   /** Screen sharing started, was refused or failed, or ended (also from Android's own controls). */
   screenShare(status: NativeScreenStatus): void;
+  /** A message from the native call (JSON, see nativeCall.ts). */
+  callMedia(json: string): void;
 }
 
 declare global {

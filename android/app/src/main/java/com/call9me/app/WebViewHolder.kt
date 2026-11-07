@@ -85,6 +85,7 @@ object WebViewHolder {
 
     fun destroy() {
         ScreenShare.stop()
+        NativeCall.stop()
         webView?.apply {
             stopLoading()
             destroy()
@@ -138,6 +139,7 @@ object WebViewHolder {
             CallService.start(context, callTitle, callVideo)
         } else {
             ScreenShare.stop()
+            NativeCall.stop()
             CallService.stop(context)
             Updater.installIfIdle(context) // an update was waiting for the call to end
         }
@@ -206,6 +208,7 @@ object WebViewHolder {
         override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) {
             pageUrl = url
             ScreenShare.stop() // a new page is no longer in that call
+            NativeCall.stop()
         }
 
         override fun onPageFinished(view: WebView, url: String?) {
@@ -224,6 +227,7 @@ object WebViewHolder {
             val current = activity
             if (webView === view) {
                 ScreenShare.stop()
+                NativeCall.stop()
                 (view.parent as? ViewGroup)?.removeView(view)
                 view.destroy()
                 webView = null
@@ -304,6 +308,22 @@ class Bridge(private val context: Context) {
                 else -> activity.requestScreenShare()
             }
         }
+    }
+
+    /** Calls run natively here (NativeCall: the app's own WebRTC and call screen). */
+    @JavascriptInterface
+    fun nativeCallsSupported(): Boolean = trusted() && NativeCall.supported(context)
+
+    /** A message for the native call (see src/client/lib/nativeCall.ts). */
+    @JavascriptInterface
+    fun callMedia(json: String) {
+        if (!trusted()) return
+        val message = try {
+            JSONObject(json)
+        } catch (e: Exception) {
+            return
+        }
+        main.post { NativeCall.onPageMessage(context, message) }
     }
 
     @JavascriptInterface

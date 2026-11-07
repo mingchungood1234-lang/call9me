@@ -102,7 +102,7 @@ object Updater {
     /** Installs a downloaded update if the app is out of sight and not in a call. */
     fun installIfIdle(context: Context) {
         val update = ready ?: return
-        if (appVisible || WebViewHolder.inCall) return
+        if (appVisible || WebViewHolder.inCall || CallActivity.current != null) return
         ready = null
         val app = context.applicationContext
         executor.execute {

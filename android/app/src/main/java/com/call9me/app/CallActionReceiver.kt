@@ -25,7 +25,10 @@ class CallActionReceiver : BroadcastReceiver() {
             ACTION_HANG_UP -> {
                 if (!WebViewHolder.command("hangUp")) CallService.stop(context)
             }
-            ACTION_STOP_SHARING -> ScreenShare.stop()
+            ACTION_STOP_SHARING -> {
+                ScreenShare.stop()
+                NativeCall.stopScreen()
+            }
         }
     }
 }

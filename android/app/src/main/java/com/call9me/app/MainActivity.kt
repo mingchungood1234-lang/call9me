@@ -21,6 +21,7 @@ import android.webkit.PermissionRequest
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.widget.FrameLayout
+import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
@@ -44,6 +45,8 @@ class MainActivity : AppCompatActivity() {
     companion object {
         const val ACTION_ANSWER = "com.call9me.app.ANSWER"
         const val ACTION_OPEN_URL = "com.call9me.app.OPEN_URL"
+        /** The call notification: back to the native call screen, if there is one. */
+        const val ACTION_SHOW_CALL = "com.call9me.app.SHOW_CALL"
         const val EXTRA_URL = "url"
 
         /** In the background (not in a call) this long, the page disconnects: calls then ring natively. */
@@ -61,6 +64,10 @@ class MainActivity : AppCompatActivity() {
     private var dark = false
 
     private var pendingWebPermission: PermissionRequest? = null
+    /** A native call waiting for the microphone/camera permission answer. */
+    private var pendingCallPermission: (() -> Unit)? = null
+    /** "Return to call" bar while a native call runs behind the app. */
+    private var callBar: TextView? = null
     private var fileCallback: ValueCallback<Array<Uri>>? = null
 
     private val goQuiet = Runnable {
@@ -74,6 +81,9 @@ class MainActivity : AppCompatActivity() {
         val request = pendingWebPermission
         pendingWebPermission = null
         if (request != null) grantAllowed(request)
+        val callDone = pendingCallPermission
+        pendingCallPermission = null
+        callDone?.invoke()
         if (result.values.any { !it }) Toast.makeText(this, R.string.permissionNeeded, Toast.LENGTH_LONG).show()
         WebViewHolder.retryCallService(applicationContext)
     }
@@ -173,6 +183,10 @@ class MainActivity : AppCompatActivity() {
                 else WebViewHolder.load("/app?answer=$callId")
                 return true
             }
+            ACTION_SHOW_CALL -> {
+                if (NativeCall.active) NativeCall.showCallScreen()
+                return WebViewHolder.webView?.url != null
+            }
             ACTION_OPEN_URL -> {
                 val url = intent.getStringExtra(EXTRA_URL) ?: return false
                 if (!url.startsWith("/") && !Site.isOwn(url)) return false
@@ -196,6 +210,7 @@ class MainActivity : AppCompatActivity() {
         WebViewHolder.webView?.onResume()
         WebViewHolder.command("background", false)
         Updater.onAppShown(this)
+        updateCallBar()
     }
 
     override fun onStop() {
@@ -220,6 +235,7 @@ class MainActivity : AppCompatActivity() {
 
     fun onCallStateChanged(inCall: Boolean) {
         showOverLockScreen(inCall)
+        updateCallBar()
         if (inCall) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         // The call ended while the app was in the background: go quiet as usual.
@@ -227,6 +243,39 @@ class MainActivity : AppCompatActivity() {
             handler.removeCallbacks(goQuiet)
             handler.postDelayed(goQuiet, QUIET_AFTER_MS)
         }
+    }
+
+    /** Native calls: asks for the microphone/camera, then `done` (granted or not). */
+    fun requestCallPermissions(permissions: List<String>, done: () -> Unit) {
+        pendingCallPermission?.invoke()
+        pendingCallPermission = done
+        callPermissions.launch(permissions.toTypedArray())
+    }
+
+    /** Shows "Return to call" at the top while a native call runs behind the app's pages. */
+    fun updateCallBar() {
+        val show = NativeCall.active && CallActivity.current == null
+        var bar = callBar
+        if (!show) {
+            bar?.visibility = View.GONE
+            return
+        }
+        if (bar == null) {
+            bar = TextView(this).apply {
+                setText(R.string.callReturn)
+                setTextColor(0xFFFFFFFF.toInt())
+                textSize = 15f
+                gravity = android.view.Gravity.CENTER
+                setBackgroundColor(ContextCompat.getColor(this@MainActivity, R.color.answer))
+                val pad = (10 * resources.displayMetrics.density).toInt()
+                setPadding(pad, pad, pad, pad)
+                setOnClickListener { NativeCall.showCallScreen() }
+            }
+            (root as ViewGroup).addView(bar, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, android.view.Gravity.BOTTOM))
+            callBar = bar
+        }
+        bar.visibility = View.VISIBLE
+        bar.translationY = -container.paddingBottom.toFloat()
     }
 
     fun requestScreenShare() {

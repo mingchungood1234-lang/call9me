@@ -20,6 +20,24 @@
     <string name="sharingScreenText">Sharing your screen</string>
     <string name="stopSharing">Stop sharing</string>
 
+    <string name="callChat">Back to chat (the call continues)</string>
+    <string name="callAddPerson">Add person</string>
+    <string name="callInvite">Invite</string>
+    <string name="callInviteHint">User ID</string>
+    <string name="callMic">Microphone</string>
+    <string name="callCamera">Camera</string>
+    <string name="callFlip">Switch camera</string>
+    <string name="callShareScreen">Share screen</string>
+    <string name="callShareFailed">Screen sharing is not available.</string>
+    <string name="callSpeaker">Speaker</string>
+    <string name="callConnecting">Connecting…</string>
+    <string name="callReconnecting">Reconnecting…</string>
+    <string name="callTheirScreen">%1$s (screen)</string>
+    <string name="callYourScreen">Your screen</string>
+    <string name="callSharingNote">Everyone can see your screen</string>
+    <string name="callYou">You</string>
+    <string name="callReturn">● Call in progress · tap to return</string>
+
     <string name="updateTitle">Update available</string>
     <string name="updateText">Call9me %1$s is ready (%2$s MB). Update now?</string>
     <string name="updateNow">Update</string>

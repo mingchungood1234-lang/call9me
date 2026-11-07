@@ -1,4 +1,5 @@
 import type { CallElsewhere, CallRejoin, IceCandidate } from '../../shared/types';
+import { NativeCallMedia, nativeCallsAvailable } from './nativeCall';
 import { canShareNativeScreen, startNativeScreen, stopNativeScreen } from './nativeScreen';
 import { NOT_CONNECTED, withTimeout, type AppSocket } from './socket';
 
@@ -84,7 +85,7 @@ const IDLE = IDLE_CALL;
  * phone browsers can view a share but not start one.
  */
 export function canShareScreen(): boolean {
-  if (canShareNativeScreen()) return true;
+  if (nativeCallsAvailable() || canShareNativeScreen()) return true;
   return (
     typeof navigator.mediaDevices?.getDisplayMedia === 'function' &&
     !window.matchMedia('(pointer: coarse)').matches
@@ -100,6 +101,9 @@ export function canShareScreen(): boolean {
  * second for a screen share, so both can be on at once and either switched with
  * `replaceTrack`, no renegotiation. A peer on an older version negotiates only one;
  * then a screen share replaces the camera there, as before.
+ *
+ * In the Android app the media runs natively (`native`, see nativeCall.ts): the same protocol,
+ * but the connections, camera and microphone live in the app, and this class only relays.
  */
 export class CallManager {
   private info: CallInfo = { ...IDLE };
@@ -120,14 +124,73 @@ export class CallManager {
   private rejoinCall: CallRejoin | null = null;
   /** The call we were in when the connection dropped, to rejoin automatically once it's back. */
   private dropped: { callId: string; video: boolean } | null = null;
+  /** Android app: the media runs natively; null in browsers. */
+  private readonly native: NativeCallMedia | null;
+  /** Native mode: the peers the app has a connection with. */
+  private readonly nativePeers = new Set<string>();
+  private readonly events: CallEvents;
 
   constructor(
     private readonly socket: AppSocket,
     private readonly selfId: string,
     private readonly iceServers: RTCIceServer[],
-    private readonly events: CallEvents,
+    events: CallEvents,
   ) {
+    this.native = nativeCallsAvailable() ? this.createNative() : null;
+    // The native call screen covers the page: show its notices there too.
+    this.events = this.native
+      ? {
+          ...events,
+          onNotice: (message, kind) => {
+            events.onNotice(message, kind);
+            if (this.info.state !== 'idle') this.native?.notice(message, kind ?? 'info');
+          },
+        }
+      : events;
     this.bindSocket();
+  }
+
+  private createNative(): NativeCallMedia {
+    return new NativeCallMedia({
+      signal: (to, kind, sdp, candidate) => {
+        if (kind === 'ice') {
+          if (candidate) this.socket.emit('webrtc:ice', { to, candidate });
+        } else if (kind === 'offer') {
+          this.socket.emit('webrtc:offer', { to, sdp: { type: 'offer', sdp: sdp ?? '' } });
+        } else {
+          this.socket.emit('webrtc:answer', { to, sdp: { type: 'answer', sdp: sdp ?? '' } });
+        }
+      },
+      onState: (state, previous) => {
+        if (this.info.state !== 'in-call') return;
+        if (state.camera !== previous.camera) this.socket.emit('call:camera', { on: state.camera });
+        if (state.sharing !== previous.sharing) this.socket.emit('call:screen', { sharing: state.sharing });
+        if (state.facing !== previous.facing) {
+          this.facing = state.facing;
+          this.events.onFacingChange(state.facing);
+        }
+      },
+      onPeerState: (peer, state) => {
+        if (!this.nativePeers.has(peer)) return;
+        if (state === 'failed') this.events.onNotice(`Connection to ${peer} failed. A TURN server may be needed.`, 'error');
+        this.events.onPeerConnectionState(peer, state);
+      },
+      onHangUp: () => this.hangUp(),
+      onInvite: (to) => void this.startCall(to, this.info.video),
+    });
+  }
+
+  /** In the Android app: brings the native call screen back (after minimizing it). */
+  showNativeCallScreen(): void {
+    if (this.info.state === 'in-call') this.native?.show();
+  }
+
+  get usesNativeCalls(): boolean {
+    return this.native !== null;
+  }
+
+  private hasPeer(peerId: string): boolean {
+    return this.peers.has(peerId) || this.nativePeers.has(peerId);
   }
 
   get state(): CallState {
@@ -135,6 +198,7 @@ export class CallManager {
   }
 
   get isSharingScreen(): boolean {
+    if (this.native) return this.native.state.sharing;
     return this.screenTrack !== null;
   }
 
@@ -292,10 +356,12 @@ export class CallManager {
 
   /** @returns whether the microphone is now enabled. */
   toggleMic(): boolean {
+    if (this.native) return this.info.state === 'in-call' ? this.native.toggleMic() : false;
     return this.toggleTracks(this.localStream?.getAudioTracks() ?? []);
   }
 
   get isCameraOn(): boolean {
+    if (this.native) return this.native.state.camera;
     return this.cameraTrack() !== null;
   }
 
@@ -307,6 +373,7 @@ export class CallManager {
    */
   async toggleCamera(): Promise<boolean> {
     if (this.state !== 'in-call') return false;
+    if (this.native) return this.native.toggleCamera();
     const current = this.cameraTrack();
     if (current) {
       current.stop();
@@ -336,11 +403,16 @@ export class CallManager {
   }
 
   hasLocalTrack(kind: 'audio' | 'video'): boolean {
+    if (this.native) return kind === 'audio' ? this.native.state.audio : this.native.state.camera;
     return (this.localStream?.getTracks().filter((t) => t.kind === kind).length ?? 0) > 0;
   }
 
   async startScreenShare(): Promise<void> {
     if (this.state !== 'in-call' || this.screenTrack) return;
+    if (this.native) {
+      this.native.setScreenShare(true); // the app asks Android, then shares (and says so)
+      return;
+    }
 
     let stream: MediaStream;
     if (canShareNativeScreen()) {
@@ -373,6 +445,10 @@ export class CallManager {
   }
 
   async stopScreenShare(): Promise<void> {
+    if (this.native) {
+      this.native.setScreenShare(false);
+      return;
+    }
     const track = this.screenTrack;
     if (!track) return;
     this.screenTrack = null;
@@ -433,6 +509,7 @@ export class CallManager {
 
   /** Whether there's more than one camera to switch between (phones; some laptops with a webcam). */
   async canFlipCamera(): Promise<boolean> {
+    if (this.native) return true;
     try {
       const devices = await navigator.mediaDevices.enumerateDevices();
       return devices.filter((d) => d.kind === 'videoinput').length > 1;
@@ -447,6 +524,11 @@ export class CallManager {
    * since many phones can't open both at once. @returns whether it switched.
    */
   async flipCamera(): Promise<boolean> {
+    if (this.native) {
+      if (this.state !== 'in-call' || !this.native.state.camera) return false;
+      this.native.flipCamera(); // the new facing arrives with the app's next state
+      return true;
+    }
     const current = this.cameraTrack();
     if (this.state !== 'in-call' || !current || this.flipping) return false;
     this.flipping = true;
@@ -614,7 +696,7 @@ export class CallManager {
       if (callId !== this.info.callId) return;
       this.events.onNotice(`${userId} joined the call.`, 'success');
       // Let the newcomer know we're sharing (their offer to us will arrive shortly).
-      if (this.screenTrack) this.socket.emit('call:screen', { sharing: true });
+      if (this.isSharingScreen) this.socket.emit('call:screen', { sharing: true });
       if (!this.isCameraOn) this.socket.emit('call:camera', { on: false });
     });
 
@@ -635,7 +717,7 @@ export class CallManager {
       if (callId !== this.info.callId) return;
       this.removePeer(userId);
       this.events.onNotice(`${userId} switched devices.`);
-      if (this.screenTrack) this.socket.emit('call:screen', { sharing: true });
+      if (this.isSharingScreen) this.socket.emit('call:screen', { sharing: true });
       if (!this.isCameraOn) this.socket.emit('call:camera', { on: false });
     });
 
@@ -661,17 +743,24 @@ export class CallManager {
     });
 
     this.socket.on('call:screen', ({ from, sharing }) => {
-      if (!this.peers.has(from) && !this.info.participants.includes(from)) return;
+      if (!this.hasPeer(from) && !this.info.participants.includes(from)) return;
+      this.native?.peerScreen(from, sharing);
       this.events.onPeerScreen(from, sharing);
     });
 
     this.socket.on('call:camera', ({ from, on }) => {
-      if (!this.peers.has(from) && !this.info.participants.includes(from)) return;
+      if (!this.hasPeer(from) && !this.info.participants.includes(from)) return;
+      this.native?.peerCamera(from, on);
       this.events.onPeerCamera(from, on);
     });
 
     this.socket.on('webrtc:offer', async ({ from, sdp }) => {
       if (this.info.state !== 'in-call') return;
+      if (this.native) {
+        this.nativePeers.add(from);
+        this.native.offer(from, sdp);
+        return;
+      }
       const peer = this.peers.get(from) ?? this.createPeer(from, false);
       try {
         await peer.pc.setRemoteDescription(sdp);
@@ -694,6 +783,10 @@ export class CallManager {
     });
 
     this.socket.on('webrtc:answer', async ({ from, sdp }) => {
+      if (this.native) {
+        if (this.nativePeers.has(from)) this.native.answer(from, sdp);
+        return;
+      }
       const peer = this.peers.get(from);
       if (!peer) return;
       try {
@@ -706,6 +799,10 @@ export class CallManager {
     });
 
     this.socket.on('webrtc:ice', async ({ from, candidate }) => {
+      if (this.native) {
+        if (this.nativePeers.has(from)) this.native.ice(from, candidate);
+        return;
+      }
       const peer = this.peers.get(from);
       if (!peer) return;
       if (!peer.pc.remoteDescription) {
@@ -717,6 +814,11 @@ export class CallManager {
   }
 
   private async connectTo(peerId: string): Promise<void> {
+    if (this.native) {
+      this.nativePeers.add(peerId);
+      this.native.connect(peerId);
+      return;
+    }
     const peer = this.createPeer(peerId, true);
     try {
       const offer = await peer.pc.createOffer();
@@ -803,6 +905,12 @@ export class CallManager {
   }
 
   private removePeer(peerId: string): void {
+    if (this.native) {
+      if (!this.nativePeers.delete(peerId)) return;
+      this.native.removePeer(peerId);
+      this.events.onPeerRemoved(peerId);
+      return;
+    }
     const peer = this.peers.get(peerId);
     if (!peer) return;
     this.peers.delete(peerId);
@@ -827,6 +935,13 @@ export class CallManager {
   }
 
   private async acquireMedia(video: boolean): Promise<MediaStream | null> {
+    if (this.native) {
+      // The app opens the microphone and camera (asking for permission) and its call screen.
+      const state = await this.native.start({ video, facing: this.facing, iceServers: this.iceServers, selfId: this.selfId });
+      if (!state.audio) this.events.onNotice('No access to the microphone. You will only receive media.', 'error');
+      else if (video && !state.camera) this.events.onNotice('Camera unavailable — continuing with audio only.');
+      return null;
+    }
     if (!navigator.mediaDevices?.getUserMedia) {
       this.events.onNotice('Camera/mic need HTTPS or localhost. You will only receive media.', 'error');
       return null;
@@ -856,6 +971,9 @@ export class CallManager {
 
   private setInfo(info: CallInfo): void {
     this.info = info;
+    if (this.native && info.state === 'in-call') {
+      this.native.info({ roomId: info.roomId, participants: info.participants, invited: info.invited, away: info.away });
+    }
     this.events.onStateChange({ ...info, participants: [...info.participants], invited: [...info.invited] });
   }
 
@@ -863,6 +981,10 @@ export class CallManager {
     this.session++;
     this.accepting = false;
     stopNativeScreen(); // also a share still waiting at Android's prompt
+    if (this.native) {
+      for (const peerId of [...this.nativePeers]) this.removePeer(peerId);
+      this.native.stop();
+    }
     if (this.screenTrack) {
       this.screenTrack.onended = null;
       this.screenTrack.stop();

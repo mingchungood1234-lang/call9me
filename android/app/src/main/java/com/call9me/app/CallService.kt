@@ -120,7 +120,8 @@ class CallService : Service() {
         holdLocks()
         if (screen != null) {
             val resultCode = intent!!.getIntExtra(EXTRA_RESULT_CODE, 0)
-            if (!ScreenShare.start(this, resultCode, screen)) {
+            val ok = if (NativeCall.active) NativeCall.startScreen(this, screen) else ScreenShare.start(this, resultCode, screen)
+            if (!ok) {
                 WebViewHolder.command("screenShare", "error")
                 onScreenStopped()
             }
