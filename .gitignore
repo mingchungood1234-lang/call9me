@@ -4,3 +4,6 @@ public/js/
 *.log
 .env
 data/
+
+# Firebase service account keys
+*firebase-adminsdk*.json
