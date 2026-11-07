@@ -40,7 +40,10 @@
   (function () {
     var KEY = 'call9me:inAndroidApp';
     var params = new URLSearchParams(location.search);
-    var marked = params.get('twa') === '1' || document.referrer.indexOf('android-app://') === 0;
+    // The app's WebView also says so in its user agent. The server checks that too, but a page
+    // fetched by the service worker reaches the server without it.
+    var marked = params.get('twa') === '1' || document.referrer.indexOf('android-app://') === 0 ||
+      /\bCall9meAndroid\//.test(navigator.userAgent);
     var inApp = marked;
     try {
       if (marked) sessionStorage.setItem(KEY, '1');

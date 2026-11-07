@@ -2,6 +2,8 @@ package com.call9me.app
 
 import android.content.Context
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
 import android.webkit.CookieManager
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
@@ -64,12 +66,41 @@ object LocalUi {
         dir = File(appContext.noBackupFilesDir, "localui").apply { mkdirs() }
     }
 
-    /** Where the app starts: straight on the app page when it can show at once, else the site's start. */
+    /**
+     * The site's cookies, read on the main thread. CookieManager must never be called from
+     * shouldInterceptRequest: it can wait on the very network stack that is waiting for us,
+     * and the page then never loads (a white screen, then "app isn't responding").
+     */
+    @Volatile
+    private var cookieHeader: String? = null
+    private val main = Handler(Looper.getMainLooper())
+
+    /** Main thread: takes a fresh copy of the site's cookies (after each page load, and at start). */
+    fun snapshotCookies() {
+        cookieHeader = try {
+            CookieManager.getInstance().getCookie(Site.base)
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /** Main thread: a page finished loading. The app page from the server (e.g. just after sign-in) is kept for next time. */
+    fun onPageLoaded(url: String?) {
+        snapshotCookies()
+        if (!::dir.isInitialized || !Site.isOwn(url) || Uri.parse(url).path != SHELL_PATH) return
+        val sid = sessionId() ?: return
+        if (!hasShell(sid)) refreshShell()
+    }
+
+    private fun hasShell(sid: String): Boolean =
+        synchronized(lock) { shellFile.exists() && shellKeyFile.exists() && shellKeyFile.readText() == sha1(sid) }
+
+    /** Where the app starts: straight on the app page when it can show at once, else the site's start. Main thread. */
     fun startPath(): String {
         if (!::dir.isInitialized) return "/"
+        snapshotCookies()
         val sid = sessionId() ?: return "/"
-        val stored = synchronized(lock) { shellFile.exists() && shellKeyFile.exists() && shellKeyFile.readText() == sha1(sid) }
-        return if (stored) SHELL_PATH else "/"
+        return if (hasShell(sid)) SHELL_PATH else "/"
     }
 
     /** WebViewClient / ServiceWorkerClient hook: a local response, or null to use the network. */
@@ -91,11 +122,7 @@ object LocalUi {
     // ---- The app page ----
 
     private fun sessionId(): String? {
-        val cookies = try {
-            CookieManager.getInstance().getCookie(Site.base)
-        } catch (e: Exception) {
-            null
-        } ?: return null
+        val cookies = cookieHeader ?: return null
         return cookies.split(';').map { it.trim() }
             .firstOrNull { it.startsWith("$SESSION_COOKIE=") }
             ?.substringAfter('=')
@@ -140,7 +167,7 @@ object LocalUi {
     }
 
     private fun fetchShell(sid: String) {
-        val cookie = CookieManager.getInstance().getCookie(Site.base) ?: return
+        val cookie = cookieHeader ?: return
         val conn = URL(Site.url(SHELL_PATH)).openConnection() as HttpURLConnection
         try {
             conn.instanceFollowRedirects = false
@@ -150,12 +177,22 @@ object LocalUi {
             conn.setRequestProperty("User-Agent", userAgent)
             conn.setRequestProperty("Accept", "text/html")
             val code = conn.responseCode
-            // The server refreshes the session cookie on the app page; keep that.
-            val cookies = CookieManager.getInstance()
-            conn.headerFields.forEach { (name, values) ->
-                if (name.equals("Set-Cookie", ignoreCase = true)) values.forEach { cookies.setCookie(Site.base, it) }
+            // The server refreshes the session cookie on the app page; keep that (on the main thread).
+            val setCookies = conn.headerFields.entries
+                .filter { it.key.equals("Set-Cookie", ignoreCase = true) }
+                .flatMap { it.value }
+            if (setCookies.isNotEmpty()) {
+                main.post {
+                    try {
+                        val cookies = CookieManager.getInstance()
+                        setCookies.forEach { cookies.setCookie(Site.base, it) }
+                        cookies.flush()
+                    } catch (e: Exception) {
+                        // Keep the old cookie; the page refreshes it too.
+                    }
+                    snapshotCookies()
+                }
             }
-            cookies.flush()
             if (code == 200) {
                 val body = conn.inputStream.use { it.readBytes() }
                 synchronized(lock) {

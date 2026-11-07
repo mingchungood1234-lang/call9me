@@ -173,13 +173,16 @@ object WebViewHolder {
             userAgentString = "$userAgentString ${Site.userAgentTag}"
         }
         LocalUi.userAgent = view.settings.userAgentString
-        // Requests a service worker makes (if the site registered one) are served locally too.
+        // Requests the site's service worker makes are served locally too. Once it is registered,
+        // page loads go through it: its fetch of a page (Accept: text/html) counts as the page load.
         if (WebViewFeature.isFeatureSupported(WebViewFeature.SERVICE_WORKER_BASIC_USAGE) &&
             WebViewFeature.isFeatureSupported(WebViewFeature.SERVICE_WORKER_SHOULD_INTERCEPT_REQUEST)
         ) {
             ServiceWorkerControllerCompat.getInstance().setServiceWorkerClient(object : ServiceWorkerClientCompat() {
-                override fun shouldInterceptRequest(request: WebResourceRequest): WebResourceResponse? =
-                    LocalUi.intercept(request, mainFrame = false)
+                override fun shouldInterceptRequest(request: WebResourceRequest): WebResourceResponse? {
+                    val accept = request.requestHeaders.entries.firstOrNull { it.key.equals("Accept", ignoreCase = true) }?.value
+                    return LocalUi.intercept(request, mainFrame = accept?.contains("text/html") == true)
+                }
             })
         }
         // The page has its own light/dark themes: never let the WebView darken it.
@@ -210,8 +213,16 @@ object WebViewHolder {
                     activity?.openCustomTab(uri)
                     return true
                 }
-                // The download page and APK make no sense inside the app.
-                return uri.path == "/download/android" || uri.path == "/get-app"
+                // The site's "get the app" redirect fired inside the app (it didn't recognise it,
+                // e.g. a page fetched by the service worker). Just cancelling it leaves a half-loaded,
+                // blank page: open the page it came from instead, marked as the app (?twa=1).
+                if (uri.path == "/get-app") {
+                    val next = uri.getQueryParameter("next")?.takeIf { it.startsWith("/") && !it.startsWith("//") } ?: "/"
+                    view.post { load(next + (if (next.contains('?')) "&" else "?") + "twa=1") }
+                    return true
+                }
+                // The APK download makes no sense inside the app.
+                return uri.path == "/download/android"
             }
             if (uri.scheme == "blob" || uri.scheme == "data" || uri.scheme == "about") return false
             activity?.openExternal(uri)
@@ -242,6 +253,7 @@ object WebViewHolder {
         override fun onPageFinished(view: WebView, url: String?) {
             pageUrl = url
             CookieManager.getInstance().flush()
+            LocalUi.onPageLoaded(url) // signed in or out: the app page cache follows the session
             if (failed) return // finished showing an error page, not ours
             firstPageShown = true
             activity?.onPageShown()
