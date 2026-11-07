@@ -41,6 +41,16 @@ router.get('/download/android', (_req, res) => {
   res.type('application/vnd.android.package-archive');
   res.download(app.apkPath, 'Call9me.apk');
 });
+// The app checks this when opened and offers to update itself (android/…/Updater.kt).
+router.get('/download/android/version', (_req, res) => {
+  const app = androidApp();
+  if (!app) {
+    res.status(404).json({ error: 'No Android app yet.' });
+    return;
+  }
+  res.set('Cache-Control', 'no-cache');
+  res.json({ versionCode: app.versionCode, versionName: app.versionName, size: app.size, url: '/download/android' });
+});
 router.get('/.well-known/assetlinks.json', (_req, res) => {
   res.set('Cache-Control', 'public, max-age=3600');
   res.json(assetLinks());

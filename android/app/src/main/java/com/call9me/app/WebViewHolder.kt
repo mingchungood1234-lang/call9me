@@ -54,8 +54,10 @@ object WebViewHolder {
         private set
 
     /** Title and kind of the current call, for the ongoing-call notification. */
-    private var callTitle = ""
-    private var callVideo = false
+    var callTitle = ""
+        private set
+    var callVideo = false
+        private set
 
     fun obtain(activity: MainActivity): WebView {
         this.activity = activity
@@ -82,6 +84,7 @@ object WebViewHolder {
     }
 
     fun destroy() {
+        ScreenShare.stop()
         webView?.apply {
             stopLoading()
             destroy()
@@ -134,6 +137,7 @@ object WebViewHolder {
             callVideo = info.optBoolean("video")
             CallService.start(context, callTitle, callVideo)
         } else {
+            ScreenShare.stop()
             CallService.stop(context)
         }
         activity?.onCallStateChanged(nowInCall)
@@ -173,6 +177,7 @@ object WebViewHolder {
         view.overScrollMode = View.OVER_SCROLL_NEVER
         view.isVerticalScrollBarEnabled = false
         view.addJavascriptInterface(Bridge(appContext), "Call9meAndroid")
+        ScreenShare.install(view) // window.call9meScreen: screen-share frames for the page
         view.webViewClient = Client()
         view.webChromeClient = Chrome()
         view.setDownloadListener { url, _, _, _, _ -> activity?.openExternal(Uri.parse(url)) }
@@ -199,6 +204,7 @@ object WebViewHolder {
 
         override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) {
             pageUrl = url
+            ScreenShare.stop() // a new page is no longer in that call
         }
 
         override fun onPageFinished(view: WebView, url: String?) {
@@ -216,6 +222,7 @@ object WebViewHolder {
             // The page's process crashed or was killed: start over instead of crashing the app.
             val current = activity
             if (webView === view) {
+                ScreenShare.stop()
                 (view.parent as? ViewGroup)?.removeView(view)
                 view.destroy()
                 webView = null
@@ -278,6 +285,29 @@ class Bridge(private val context: Context) {
     @JavascriptInterface
     fun callState(json: String) {
         if (trusted()) main.post { WebViewHolder.onCallState(context, json) }
+    }
+
+    /** Screen sharing works here (see ScreenShare). */
+    @JavascriptInterface
+    fun screenShareSupported(): Boolean = trusted() && ScreenShare.supported()
+
+    /** Shows Android's "Start sharing?" prompt; answers with call9meNative.screenShare(status). */
+    @JavascriptInterface
+    fun startScreenShare() {
+        if (!trusted()) return
+        main.post {
+            val activity = WebViewHolder.activity
+            when {
+                ScreenShare.active -> WebViewHolder.command("screenShare", "started")
+                activity == null || !WebViewHolder.inCall -> WebViewHolder.command("screenShare", "denied")
+                else -> activity.requestScreenShare()
+            }
+        }
+    }
+
+    @JavascriptInterface
+    fun stopScreenShare() {
+        if (trusted()) main.post { ScreenShare.stop() }
     }
 
     @JavascriptInterface

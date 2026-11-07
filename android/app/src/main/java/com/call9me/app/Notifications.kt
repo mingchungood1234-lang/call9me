@@ -180,7 +180,8 @@ object Notifications {
 
     // ---- Ongoing call (CallService) ----
 
-    fun ongoingCall(context: Context, title: String, video: Boolean, since: Long): Notification {
+    /** `sharing`: the screen is being shared (says so, with a Stop sharing button). */
+    fun ongoingCall(context: Context, title: String, video: Boolean, since: Long, sharing: Boolean = false): Notification {
         val open = PendingIntent.getActivity(
             context,
             0,
@@ -197,7 +198,7 @@ object Notifications {
             .setSmallIcon(R.drawable.ic_notification)
             .setColor(ContextCompat.getColor(context, R.color.brand))
             .setContentTitle(title)
-            .setContentText(context.getString(R.string.ongoingCallText))
+            .setContentText(context.getString(if (sharing) R.string.sharingScreenText else R.string.ongoingCallText))
             .setCategory(NotificationCompat.CATEGORY_CALL)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
@@ -205,6 +206,15 @@ object Notifications {
             .setUsesChronometer(true)
             .setShowWhen(true)
             .setContentIntent(open)
+        if (sharing) {
+            val stopSharing = PendingIntent.getBroadcast(
+                context,
+                1,
+                Intent(context, CallActionReceiver::class.java).setAction(CallActionReceiver.ACTION_STOP_SHARING),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            )
+            builder.addAction(R.drawable.ic_notification, context.getString(R.string.stopSharing), stopSharing)
+        }
         return try {
             builder.setStyle(NotificationCompat.CallStyle.forOngoingCall(person(title, null), hangUp).setIsVideo(video)).build()
         } catch (e: Exception) {

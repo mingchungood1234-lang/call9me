@@ -6,6 +6,7 @@ import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.Configuration
+import android.media.projection.MediaProjectionManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -85,6 +86,16 @@ class MainActivity : AppCompatActivity() {
             )
         }
         afterNotificationPermission(granted)
+    }
+
+    /** Android's "Start sharing?" prompt (screen sharing in a call; see ScreenShare). */
+    private val screenConsent = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        val data = result.data
+        if (result.resultCode == RESULT_OK && data != null && WebViewHolder.inCall) {
+            CallService.startScreen(applicationContext, WebViewHolder.callTitle, WebViewHolder.callVideo, result.resultCode, data)
+        } else {
+            WebViewHolder.command("screenShare", "denied")
+        }
     }
 
     private val filePicker = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
@@ -184,6 +195,7 @@ class MainActivity : AppCompatActivity() {
         handler.removeCallbacks(goQuiet)
         WebViewHolder.webView?.onResume()
         WebViewHolder.command("background", false)
+        Updater.onAppShown(this)
     }
 
     override fun onStop() {
@@ -213,6 +225,15 @@ class MainActivity : AppCompatActivity() {
         if (!inCall && !started) {
             handler.removeCallbacks(goQuiet)
             handler.postDelayed(goQuiet, QUIET_AFTER_MS)
+        }
+    }
+
+    fun requestScreenShare() {
+        val manager = getSystemService(MediaProjectionManager::class.java)
+        try {
+            screenConsent.launch(manager.createScreenCaptureIntent())
+        } catch (e: Exception) {
+            WebViewHolder.command("screenShare", "error")
         }
     }
 
@@ -329,7 +350,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun openSettings(action: String) {
+    fun openSettings(action: String) {
         val intent = Intent(action)
             .putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
             .setData(Uri.fromParts("package", packageName, null))

@@ -1,4 +1,5 @@
 import type { CallElsewhere, CallRejoin, IceCandidate } from '../../shared/types';
+import { canShareNativeScreen, startNativeScreen, stopNativeScreen } from './nativeScreen';
 import { NOT_CONNECTED, withTimeout, type AppSocket } from './socket';
 
 export type CallState = 'idle' | 'incoming' | 'in-call';
@@ -78,8 +79,12 @@ export const IDLE_CALL: CallInfo = {
 };
 const IDLE = IDLE_CALL;
 
-/** Screen capture exists only in desktop browsers; phones can view a share but not start one. */
+/**
+ * Screen capture exists in desktop browsers and in the Android app (natively, see nativeScreen.ts);
+ * phone browsers can view a share but not start one.
+ */
 export function canShareScreen(): boolean {
+  if (canShareNativeScreen()) return true;
   return (
     typeof navigator.mediaDevices?.getDisplayMedia === 'function' &&
     !window.matchMedia('(pointer: coarse)').matches
@@ -338,14 +343,22 @@ export class CallManager {
     if (this.state !== 'in-call' || this.screenTrack) return;
 
     let stream: MediaStream;
-    try {
-      stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
-    } catch {
-      return; // The user closed the picker.
+    if (canShareNativeScreen()) {
+      // Android app: the system's "Start sharing?" prompt. Stopping from Android's own controls ends it here too.
+      const native = await startNativeScreen(() => void this.stopScreenShare());
+      if (!native) return; // Refused or failed.
+      stream = native;
+    } else {
+      try {
+        stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+      } catch {
+        return; // The user closed the picker.
+      }
     }
     const track = stream.getVideoTracks()[0];
-    if (!track || this.state !== 'in-call') {
+    if (!track || this.state !== 'in-call' || this.screenTrack) {
       stream.getTracks().forEach((t) => t.stop());
+      stopNativeScreen();
       return;
     }
 
@@ -365,6 +378,7 @@ export class CallManager {
     this.screenTrack = null;
     track.onended = null;
     track.stop();
+    stopNativeScreen();
 
     await this.syncVideoSenders();
     if (this.state !== 'idle') this.socket.emit('call:screen', { sharing: false });
@@ -848,6 +862,7 @@ export class CallManager {
   private cleanup(): void {
     this.session++;
     this.accepting = false;
+    stopNativeScreen(); // also a share still waiting at Android's prompt
     if (this.screenTrack) {
       this.screenTrack.onended = null;
       this.screenTrack.stop();

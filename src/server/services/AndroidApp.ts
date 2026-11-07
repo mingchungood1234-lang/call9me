@@ -11,6 +11,8 @@ export interface AndroidAppInfo {
   size: number;
   packageName: string;
   versionName: string;
+  /** Android's version number: the app updates itself when the site offers a higher one. */
+  versionCode: number;
   /** SHA-256 fingerprints of the signing certificate(s), as AA:BB:… */
   sha256: string[];
 }
@@ -48,6 +50,7 @@ export function androidApp(): AndroidAppInfo | null {
       const meta = JSON.parse(fs.readFileSync(META, 'utf8')) as Partial<{
         packageName: string;
         versionName: string;
+        versionCode: number;
         sha256: string[];
       }>;
       const sha256 = [...new Set([...(meta.sha256 ?? []), ...envFingerprints()])].filter((s) => FINGERPRINT.test(s));
@@ -56,6 +59,7 @@ export function androidApp(): AndroidAppInfo | null {
         size: fs.statSync(APK).size,
         packageName: process.env.ANDROID_PACKAGE?.trim() || meta.packageName || 'com.call9me.app',
         versionName: meta.versionName ?? '',
+        versionCode: Number(meta.versionCode) || 0,
         sha256,
       };
     } catch (err) {

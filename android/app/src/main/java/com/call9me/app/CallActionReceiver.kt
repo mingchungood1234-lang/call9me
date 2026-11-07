@@ -4,11 +4,12 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 
-/** Notification buttons: Decline an incoming call, Hang up an ongoing one. */
+/** Notification buttons: Decline an incoming call, Hang up an ongoing one, Stop sharing the screen. */
 class CallActionReceiver : BroadcastReceiver() {
     companion object {
         const val ACTION_DECLINE = "com.call9me.app.DECLINE"
         const val ACTION_HANG_UP = "com.call9me.app.HANG_UP"
+        const val ACTION_STOP_SHARING = "com.call9me.app.STOP_SHARING"
         const val EXTRA_CALL_ID = "callId"
     }
 
@@ -24,6 +25,7 @@ class CallActionReceiver : BroadcastReceiver() {
             ACTION_HANG_UP -> {
                 if (!WebViewHolder.command("hangUp")) CallService.stop(context)
             }
+            ACTION_STOP_SHARING -> ScreenShare.stop()
         }
     }
 }

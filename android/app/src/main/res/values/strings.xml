@@ -17,6 +17,17 @@
     <string name="ongoingCall">Call in progress</string>
     <string name="ongoingCallText">Tap to return to the call</string>
 
+    <string name="sharingScreenText">Sharing your screen</string>
+    <string name="stopSharing">Stop sharing</string>
+
+    <string name="updateTitle">Update available</string>
+    <string name="updateText">Call9me %1$s is ready (%2$s MB). Update now?</string>
+    <string name="updateNow">Update</string>
+    <string name="updateLater">Later</string>
+    <string name="updateDownloading">Downloading the update…</string>
+    <string name="updateAllowInstall">Allow Call9me to install updates, then come back to the app.</string>
+    <string name="updateFailed">The update could not be installed.</string>
+
     <string name="offlineTitle">Can\'t reach Call9me</string>
     <string name="offlineText">Check your internet connection, then try again.</string>
     <string name="retry">Try again</string>

@@ -19,7 +19,16 @@ export interface AndroidBridge {
   callState(json: string): void;
   /** Light or dark theme, for the system bars. */
   setTheme(dark: boolean): void;
+  // Screen sharing (src/client/lib/nativeScreen.ts). Missing in app versions before it.
+  /** The app can share the screen here. */
+  screenShareSupported?(): boolean;
+  /** Shows Android's "Start sharing?" prompt; answers with call9meNative.screenShare(status). */
+  startScreenShare?(): void;
+  stopScreenShare?(): void;
 }
+
+/** Where a native screen share stands: started, refused at the prompt, failed, or stopped. */
+export type NativeScreenStatus = 'started' | 'denied' | 'error' | 'ended';
 
 /** What the app can ask the page to do. */
 export interface NativeCommands {
@@ -31,6 +40,8 @@ export interface NativeCommands {
   background(away: boolean): void;
   /** Result of enablePush(): status, and the token when "on". */
   pushResult(status: string, token: string): void;
+  /** Screen sharing started, was refused or failed, or ended (also from Android's own controls). */
+  screenShare(status: NativeScreenStatus): void;
 }
 
 declare global {

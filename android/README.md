@@ -12,6 +12,8 @@ The screens are the Call9me website shown inside the app, so the design matches 
 | Camera, microphone, notification and file permissions | Android's own prompts |
 | "Continue with Google" | Google blocks sign-in inside apps. It opens in a Chrome Custom Tab and hands the session back to the app. |
 | Chat messages, missed calls and friend requests as notifications | FCM |
+| **Screen sharing**: Android's own "Start sharing?" prompt (whole screen or one app), keeps going while you use other apps, **Stop sharing** in the call notification | `ScreenShare.kt` (MediaProjection) sends frames to the page, which makes them a video track (`src/client/lib/nativeScreen.ts`). The WebView alone can't share the screen. |
+| **Updates itself**: when the site has a newer APK, the app offers **Update** and installs it in place | `Updater.kt` checks `/download/android/version` when the app opens (at most hourly, never during a call). Android asks the user once to allow installs from Call9me, then confirms each update. |
 
 When the app is in the background and not in a call, it disconnects from the server after 15 seconds, and calls then ring through FCM. This is the normal pattern for calling apps, and it saves battery.
 
