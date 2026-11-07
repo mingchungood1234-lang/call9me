@@ -12,6 +12,34 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent" />
 
+    <!-- Until the page has painted: never an empty screen (also after the splash times out). -->
+    <LinearLayout
+        android:id="@+id/loading"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@color/windowBackground"
+        android:clickable="true"
+        android:gravity="center"
+        android:orientation="vertical">
+
+        <TextView
+            android:layout_width="72dp"
+            android:layout_height="72dp"
+            android:background="@drawable/bg_avatar"
+            android:gravity="center"
+            android:text="9"
+            android:textColor="#FFFFFF"
+            android:textSize="32sp"
+            android:textStyle="bold" />
+
+        <ProgressBar
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:layout_marginTop="24dp"
+            android:indeterminate="true"
+            android:indeterminateTint="@color/brand" />
+    </LinearLayout>
+
     <LinearLayout
         android:id="@+id/offline"
         android:layout_width="match_parent"

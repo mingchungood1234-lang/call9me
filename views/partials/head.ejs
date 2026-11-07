@@ -24,7 +24,10 @@
 <meta name="apple-mobile-web-app-title" content="Call9me">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<!-- Not render-blocking: when Google Fonts is slow or unreachable the page still shows at once
+     (in the system font), instead of a blank screen until the request gives up. -->
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+<noscript><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet"></noscript>
 <link rel="stylesheet" href="/css/styles.css?v=<%= assetVersion %>">
 <meta name="app-version" content="<%= assetVersion %>">
 <% if (locals.androidApp) { %>

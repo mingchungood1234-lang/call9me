@@ -51,6 +51,8 @@ class MainActivity : AppCompatActivity() {
 
         /** In the background (not in a call) this long, the page disconnects: calls then ring natively. */
         private const val QUIET_AFTER_MS = 15_000L
+        /** The first page hasn't painted after this long: show "Can't reach Call9me" with Try again. */
+        private const val LOADING_TIMEOUT_MS = 20_000L
         private const val DARK = 0xFF0B0E1A.toInt()
         private const val LIGHT = 0xFFF3F5FB.toInt()
     }
@@ -58,6 +60,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var root: View
     private lateinit var container: FrameLayout
     private lateinit var offline: View
+    private lateinit var loading: View
     private val handler = Handler(Looper.getMainLooper())
     private var keepSplash = true
     private var started = false
@@ -124,9 +127,12 @@ class MainActivity : AppCompatActivity() {
         root = findViewById(R.id.root)
         container = findViewById(R.id.webContainer)
         offline = findViewById(R.id.offline)
+        loading = findViewById(R.id.loading)
         findViewById<View>(R.id.retry).setOnClickListener {
             offline.visibility = View.GONE
-            WebViewHolder.webView?.reload()
+            val webView = WebViewHolder.webView
+            if (webView?.url == null) WebViewHolder.load(LocalUi.startPath()) else webView.reload()
+            if (!WebViewHolder.firstPageShown) watchLoading()
         }
         // The page sits between the status bar, the navigation bar and the keyboard.
         ViewCompat.setOnApplyWindowInsetsListener(root) { _, insets ->
@@ -135,6 +141,7 @@ class MainActivity : AppCompatActivity() {
             )
             container.setPadding(bars.left, bars.top, bars.right, bars.bottom)
             offline.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+            loading.setPadding(bars.left, bars.top, bars.right, bars.bottom)
             insets
         }
         applyTheme(systemDark())
@@ -155,7 +162,23 @@ class MainActivity : AppCompatActivity() {
         val webView = WebViewHolder.obtain(this)
         webView.setBackgroundColor(if (dark) DARK else LIGHT)
         container.addView(webView, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-        if (WebViewHolder.firstPageShown) keepSplash = false
+        if (WebViewHolder.firstPageShown) {
+            keepSplash = false
+            loading.visibility = View.GONE
+        } else {
+            watchLoading()
+        }
+    }
+
+    /** A first page that hasn't painted in a while (no error, just stuck): offer Try again. */
+    private val loadingStuck = Runnable {
+        if (!WebViewHolder.firstPageShown) showOffline()
+    }
+
+    private fun watchLoading() {
+        loading.visibility = View.VISIBLE
+        handler.removeCallbacks(loadingStuck)
+        handler.postDelayed(loadingStuck, LOADING_TIMEOUT_MS)
     }
 
     /** The page's process died: a fresh page (the call, if any, is lost). */
@@ -302,17 +325,21 @@ class MainActivity : AppCompatActivity() {
     // ---- Page events ----
 
     fun onPageShown() {
-        keepSplash = false
+        onPageVisible()
         offline.visibility = View.GONE
     }
 
-    /** The page has painted (before its pictures finish): drop the splash screen. */
+    /** The page has painted (before its pictures finish): drop the splash and loading screens. */
     fun onPageVisible() {
         keepSplash = false
+        loading.visibility = View.GONE
+        handler.removeCallbacks(loadingStuck)
     }
 
     fun showOffline() {
         keepSplash = false
+        loading.visibility = View.GONE
+        handler.removeCallbacks(loadingStuck)
         offline.visibility = View.VISIBLE
     }
 
@@ -322,6 +349,7 @@ class MainActivity : AppCompatActivity() {
         val color = if (dark) DARK else LIGHT
         root.setBackgroundColor(color)
         offline.setBackgroundColor(color)
+        loading.setBackgroundColor(color)
         WebViewHolder.webView?.setBackgroundColor(color)
         WindowInsetsControllerCompat(window, root).apply {
             isAppearanceLightStatusBars = !dark

@@ -224,11 +224,16 @@ object WebViewHolder {
 
         /** The page has painted: the splash screen can go (no need to wait for every picture). */
         override fun onPageCommitVisible(view: WebView, url: String?) {
+            if (failed) return // the WebView's own error page: keep "Can't reach Call9me" up
             firstPageShown = true
             activity?.onPageVisible()
         }
 
+        /** The current page failed to load (no connection, or the server erred). */
+        private var failed = false
+
         override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) {
+            failed = false
             pageUrl = url
             ScreenShare.stop() // a new page is no longer in that call
             NativeCall.stop()
@@ -236,13 +241,23 @@ object WebViewHolder {
 
         override fun onPageFinished(view: WebView, url: String?) {
             pageUrl = url
+            CookieManager.getInstance().flush()
+            if (failed) return // finished showing an error page, not ours
             firstPageShown = true
             activity?.onPageShown()
-            CookieManager.getInstance().flush()
         }
 
         override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
-            if (request.isForMainFrame) activity?.showOffline()
+            if (!request.isForMainFrame) return
+            failed = true
+            activity?.showOffline()
+        }
+
+        /** The server is down or restarting (e.g. during a deploy): a blank or proxy error page otherwise. */
+        override fun onReceivedHttpError(view: WebView, request: WebResourceRequest, response: WebResourceResponse) {
+            if (!request.isForMainFrame || response.statusCode < 500) return
+            failed = true
+            activity?.showOffline()
         }
 
         override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {

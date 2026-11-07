@@ -35,7 +35,7 @@ object LocalUi {
     private const val SHELL_PATH = "/app"
     private const val FONT_REFRESH_MS = 7L * 24 * 3600 * 1000
     /** A reload right after a cached page waits this long for the fresh copy. */
-    private const val SHELL_WAIT_S = 8L
+    private const val SHELL_WAIT_S = 3L
 
     private lateinit var appContext: Context
     private lateinit var dir: File
@@ -232,9 +232,10 @@ object LocalUi {
             }
             return stream(mime, file.inputStream(), cors = true)
         }
-        val body = download(key) ?: return null
-        store(key, body)
-        return stream(mime, ByteArrayInputStream(body), cors = true)
+        // Not stored yet: never hold the page up on Google. The WebView fetches it as usual
+        // (from its own cache when it can), and a copy is kept for next time.
+        io.execute { download(key)?.let { store(key, it) } }
+        return null
     }
 
     // ---- Storage ----
