@@ -40,11 +40,13 @@ object Notifications {
     const val CHANNEL_CALLS = "incoming_calls_v1"
     const val CHANNEL_ONGOING = "ongoing_call"
     const val CHANNEL_MESSAGES = "messages"
+    const val CHANNEL_UPDATES = "app_updates"
 
     private const val RING_TAG = "ring:"
     private const val RING_ID = 1
     const val ONGOING_ID = 2
     private const val MESSAGE_ID = 3
+    private const val UPDATE_ID = 4
     /** How long a call rings, as on the server (offlineRingTimeoutMs). */
     private const val RING_MS = 45_000L
 
@@ -76,7 +78,30 @@ object Notifications {
         val messages = NotificationChannel(CHANNEL_MESSAGES, context.getString(R.string.channelMessages), NotificationManager.IMPORTANCE_HIGH).apply {
             description = context.getString(R.string.channelMessagesDescription)
         }
-        manager.createNotificationChannels(listOf(calls, ongoing, messages))
+        val updates = NotificationChannel(CHANNEL_UPDATES, context.getString(R.string.channelUpdates), NotificationManager.IMPORTANCE_DEFAULT).apply {
+            description = context.getString(R.string.channelUpdatesDescription)
+            setSound(null, null)
+        }
+        manager.createNotificationChannels(listOf(calls, ongoing, messages, updates))
+    }
+
+    /** A downloaded app update Android wants confirmed: tapping opens its "Install?" screen. */
+    fun showUpdateReady(context: Context, confirm: Intent) {
+        val install = PendingIntent.getActivity(
+            context,
+            UPDATE_ID,
+            confirm.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        val notification = NotificationCompat.Builder(context, CHANNEL_UPDATES)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setColor(ContextCompat.getColor(context, R.color.brand))
+            .setContentTitle(context.getString(R.string.updateReadyTitle))
+            .setContentText(context.getString(R.string.updateReadyText))
+            .setContentIntent(install)
+            .setAutoCancel(true)
+            .build()
+        notify(context, "update", UPDATE_ID, notification)
     }
 
     // ---- Incoming calls ----

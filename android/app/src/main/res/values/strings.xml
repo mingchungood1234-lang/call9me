@@ -26,6 +26,10 @@
     <string name="updateLater">Later</string>
     <string name="updateDownloading">Downloading the update…</string>
     <string name="updateAllowInstall">Allow Call9me to install updates, then come back to the app.</string>
+    <string name="updateReadyTitle">Call9me update ready</string>
+    <string name="updateReadyText">Tap to install the new version.</string>
+    <string name="channelUpdates">App updates</string>
+    <string name="channelUpdatesDescription">When a new version of the app is ready to install.</string>
     <string name="updateFailed">The update could not be installed.</string>
 
     <string name="offlineTitle">Can\'t reach Call9me</string>

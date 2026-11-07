@@ -139,6 +139,7 @@ object WebViewHolder {
         } else {
             ScreenShare.stop()
             CallService.stop(context)
+            Updater.installIfIdle(context) // an update was waiting for the call to end
         }
         activity?.onCallStateChanged(nowInCall)
         // The call ended after the app was swiped away: nothing is left to show.

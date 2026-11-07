@@ -200,6 +200,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onStop() {
         started = false
+        if (!isChangingConfigurations) Updater.onAppHidden(applicationContext) // installs a waiting update
         CookieManager.getInstance().flush()
         if (!isChangingConfigurations && !WebViewHolder.inCall) handler.postDelayed(goQuiet, QUIET_AFTER_MS)
         super.onStop()

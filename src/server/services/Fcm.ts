@@ -45,6 +45,7 @@ function loadAccount(): ServiceAccount | null {
     try {
       raw = fs.readFileSync(file, 'utf8');
     } catch {
+      console.warn(`[fcm] Android push off: no Firebase service account at ${file} (calls won't ring in the closed app; see android/README.md)`);
       return null;
     }
   }
